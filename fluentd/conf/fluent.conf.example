@@ -1,0 +1,62 @@
+# 接收来自 forward 协议的输入
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+# 输出到 Google Cloud Logging
+<match **>
+  @type google_cloud
+
+  # 在 GCP VM 上运行时，会自动使用实例的服务账号
+  use_metadata_service true
+  
+  # 自动调整时间戳以匹配 GCP 日志格式
+  adjust_timestamp true
+  
+  # 设置日志写入器标识（可选）
+  # writer_identity "serviceAccount:my-fluentd@my-project.iam.gserviceaccount.com"
+  
+  # 自定义日志标签（可选）
+  # labels {
+  #   "env": "production",
+  #   "service": "fluentd-appender-poc"
+  # }
+  
+  # 缓冲区配置
+  <buffer>
+    @type memory
+    
+    # 刷新间隔：每5秒将日志发送到 GCP
+    flush_interval 5s
+    
+    # 单个块的大小限制：2MB
+    chunk_limit_size 2M
+    
+    # 总缓冲区大小限制：512MB
+    total_limit_size 512M
+    
+    # 重试配置
+    retry_max_interval 30    # 最大重试间隔：30秒
+    retry_forever false      # 不永久重试
+    
+    # 溢出配置（可选）
+    # overflow_action block  # 当缓冲区满时阻塞
+  </buffer>
+  
+  # 自定义日志格式（可选）
+  # <format>
+  #   @type json
+  # </format>
+  
+  # 压缩配置（可选，建议在高流量场景下启用）
+  # compress gzip
+</match>
+
+# 监控指标输出（可选）
+# <source>
+#   @type monitor_agent
+#   bind 0.0.0.0
+#   port 24220
+# </source> 
