@@ -1,0 +1,29 @@
+# Required variables
+project_id = "your-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Service account configuration
+create_service_account = true
+service_account_id    = "fluentd-agent"
+# service_account_email = ""  # Only needed if create_service_account = false
+
+# Network configuration
+create_network = false
+network_name   = "default"
+subnet_name    = "default"
+subnet_cidr    = "10.0.0.0/24"
+
+# Security configuration
+allowed_source_ranges = ["10.0.0.0/8"]  # Restrict to your application VPC
+
+# Instance configuration
+instance_name   = "fluentd-agent-vm"
+machine_type    = "e2-medium"
+instance_image  = "rhel-cloud/rhel-9"
+boot_disk_size  = 20
+boot_disk_type  = "pd-standard"
+assign_public_ip = true
+
+# Additional configuration
+additional_tags = ["logging", "fluentd"] 
