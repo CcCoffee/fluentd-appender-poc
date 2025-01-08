@@ -1,62 +1,91 @@
+# ===================== 输入配置 =====================
 # 接收来自 forward 协议的输入
+# forward 是 Fluentd 原生的数据传输协议，提供了高可靠性和高性能
 <source>
+  # 使用 forward 输入插件
   @type forward
+  # 监听端口，默认是 24224
   port 24224
+  # 监听地址，0.0.0.0 表示接受所有网络接口的连接
   bind 0.0.0.0
 </source>
 
-# 输出到 Google Cloud Logging
+# ===================== GCP Cloud Logging 输出配置 =====================
 <match **>
+  # 使用 Google Cloud Logging 输出插件
   @type google_cloud
 
+  # ===== GCP 认证配置 =====
   # 在 GCP VM 上运行时，会自动使用实例的服务账号
+  # 无需显式配置 project_id 和 credentials_json
   use_metadata_service true
   
-  # 自动调整时间戳以匹配 GCP 日志格式
+  # ===== 时间戳处理 =====
+  # 自动将 Fluentd 的时间戳格式转换为 GCP Cloud Logging 所需的格式
   adjust_timestamp true
   
-  # 设置日志写入器标识（可选）
+  # ===== 缓冲区配置 =====
+  <buffer>
+    # 使用内存缓冲区
+    # 由于运行在 GCP VM 上，内存缓冲区提供更好的性能
+    @type memory
+    
+    # 刷新间隔：每5秒将缓冲区的数据发送到 GCP
+    # 生产环境建议使用较长的间隔以减少 API 调用
+    flush_interval 5s
+    
+    # 缓冲区大小限制
+    chunk_limit_size 2M    # 单个块的大小限制，建议 2MB
+    total_limit_size 512M  # 总缓冲区大小限制，根据实例内存调整
+    
+    # 重试策略配置
+    retry_max_interval 30  # 重试间隔上限：30秒
+    retry_forever false    # 是否永久重试：否
+    
+    # 当缓冲区满时的行为
+    # block：阻塞新的写入，确保不丢失数据
+    # drop_oldest：丢弃最旧的数据（适合监控数据）
+    overflow_action block
+  </buffer>
+  
+  # ===== 可选配置（已注释） =====
+  # 设置日志写入器标识
   # writer_identity "serviceAccount:my-fluentd@my-project.iam.gserviceaccount.com"
   
-  # 自定义日志标签（可选）
+  # 自定义日志标签
   # labels {
   #   "env": "production",
   #   "service": "fluentd-appender-poc"
   # }
   
-  # 缓冲区配置
-  <buffer>
-    @type memory
-    
-    # 刷新间隔：每5秒将日志发送到 GCP
-    flush_interval 5s
-    
-    # 单个块的大小限制：2MB
-    chunk_limit_size 2M
-    
-    # 总缓冲区大小限制：512MB
-    total_limit_size 512M
-    
-    # 重试配置
-    retry_max_interval 30    # 最大重试间隔：30秒
-    retry_forever false      # 不永久重试
-    
-    # 溢出配置（可选）
-    # overflow_action block  # 当缓冲区满时阻塞
-  </buffer>
-  
-  # 自定义日志格式（可选）
+  # 自定义日志格式
   # <format>
   #   @type json
   # </format>
   
-  # 压缩配置（可选，建议在高流量场景下启用）
+  # 压缩配置（建议在高流量场景下启用）
   # compress gzip
 </match>
 
-# 监控指标输出（可选）
+# ===================== 监控配置（可选） =====================
+# 监控 API，用于查看 Fluentd 的运行状态
+# 注意：在生产环境中启用时需要考虑安全性
 # <source>
 #   @type monitor_agent
-#   bind 0.0.0.0
+#   # 仅监听本地连接
+#   bind 127.0.0.1
+#   # 监控接口端口
 #   port 24220
-# </source> 
+# </source>
+
+# ===================== 错误处理 =====================
+# 处理 Fluentd 内部错误日志
+<label @ERROR>
+  <match **>
+    # 将错误输出到标准输出
+    @type stdout
+    <format>
+      @type json
+    </format>
+  </match>
+</label> 

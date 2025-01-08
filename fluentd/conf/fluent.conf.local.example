@@ -1,0 +1,127 @@
+# ===================== 输入配置 =====================
+# 接收来自 forward 协议的输入
+# forward 是 Fluentd 原生的数据传输协议，提供了高可靠性和高性能
+<source>
+  # 使用 forward 输入插件
+  @type forward
+  # 监听端口，默认是 24224
+  port 24224
+  # 监听地址，0.0.0.0 表示接受所有网络接口的连接
+  bind 0.0.0.0
+</source>
+
+# ===================== GCP Cloud Logging 输出配置 =====================
+<match **>
+  # 使用 Google Cloud Logging 输出插件
+  @type google_cloud
+
+  # ===== GCP 项目配置 =====
+  # 您的 GCP 项目 ID，必须配置
+  project_id YOUR_PROJECT_ID
+  # 服务账号密钥文件路径，用于本地环境的身份认证
+  # 注意：
+  # 1. 确保密钥文件有适当的访问权限（建议 600）
+  # 2. 不要将密钥文件提交到版本控制系统
+  # 3. 在生产环境建议使用环境变量或密钥管理系统
+  credentials_json /path/to/your/service-account-key.json
+  
+  # ===== 时间戳处理 =====
+  # 自动将 Fluentd 的时间戳格式转换为 GCP Cloud Logging 所需的格式
+  adjust_timestamp true
+  
+  # ===== 资源配置 =====
+  # 资源类型，generic_task 适用于自定义应用
+  # 其他可选值：gce_instance, k8s_container, cloud_run_revision 等
+  resource_type "generic_task"
+  
+  # 资源标签配置，用于在 GCP Console 中标识和过滤日志
+  resource_labels {
+    # 项目 ID，必须与上面的 project_id 一致
+    "project_id": "YOUR_PROJECT_ID",
+    # 位置信息（可选）：
+    # - 可以是 GCP 区域（如 asia-east1）
+    # - 可以是自定义位置标识（如 local-dev）
+    # - 用于地理位置跟踪和日志分类
+    # "location": "YOUR_LOCATION",
+    # 命名空间，用于日志分组
+    "namespace": "default",
+    # 作业名称，用于标识日志来源
+    "job": "fluentd-agent",
+    # 任务 ID，用于区分同一作业的不同实例
+    "task_id": "local-dev"
+  }
+  
+  # ===== 自定义标签 =====
+  # 用于添加额外的元数据，便于日志查询和分析
+  labels {
+    # 环境标识
+    "env": "local-dev",
+    # 服务名称
+    "service": "fluentd-appender-poc",
+    # 组件名称
+    "component": "spring-boot-app"
+  }
+  
+  # ===== 缓冲区配置 =====
+  <buffer>
+    # 使用内存缓冲区，适合本地开发环境
+    # 生产环境可以考虑使用 file 类型
+    @type memory
+    
+    # 刷新间隔：多久将缓冲区的数据发送到 GCP
+    # 本地环境设置较短以便于调试
+    flush_interval 1s
+    
+    # 缓冲区大小限制
+    chunk_limit_size 1M    # 单个块的大小限制
+    total_limit_size 100M  # 总缓冲区大小限制
+    
+    # 重试策略配置
+    retry_max_interval 10  # 重试间隔上限
+    retry_forever false    # 是否永久重试
+    retry_max_times 3      # 最大重试次数
+    
+    # 当缓冲区满时的行为
+    # block：阻塞新的写入，确保不丢失数据
+    # drop_oldest：丢弃最旧的数据（适合监控数据）
+    overflow_action block
+  </buffer>
+  
+  # ===== 调试配置 =====
+  # 输出插件的日志配置，便于排查问题
+  <log>
+    format json    # 以 JSON 格式输出日志
+    level debug    # 输出调试级别的日志
+  </log>
+</match>
+
+# ===================== 监控配置 =====================
+# 监控 API，用于查看 Fluentd 的运行状态
+<source>
+  @type monitor_agent
+  # 监听所有网络接口
+  bind 0.0.0.0
+  # 监控接口端口
+  port 24220
+</source>
+
+# 调试接口，用于查看详细的运行信息
+<source>
+  @type debug_agent
+  # 仅监听本地连接
+  bind 127.0.0.1
+  # 调试接口端口
+  port 24230
+</source>
+
+# ===================== 错误处理 =====================
+# 处理 Fluentd 内部错误日志
+<label @ERROR>
+  <match **>
+    # 将错误输出到标准输出，便于本地调试
+    @type stdout
+    <format>
+      @type json
+    </format>
+  </match>
+</label> 
