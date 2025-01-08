@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: fluentd-appender-poc
+
+logging:
+  level:
+    root: INFO
+    com.example: INFO 

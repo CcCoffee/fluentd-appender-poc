@@ -1,0 +1,12 @@
+version: '3'
+services:
+  fluentd:
+    build:
+      context: ./fluentd
+      dockerfile: Dockerfile
+    volumes:
+      - ./logs:/fluentd/log
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    restart: always 
