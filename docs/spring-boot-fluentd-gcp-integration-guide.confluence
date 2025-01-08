@@ -1,0 +1,449 @@
+h1. Integrating Spring Boot Application Logs with GCP Cloud Logging via Fluentd
+
+h2. Background
+
+This guide demonstrates how to forward Spring Boot application logs to Google Cloud Logging using Fluentd as a logging agent. The solution leverages logback-more-appenders for efficient log forwarding and provides a complete infrastructure-as-code approach using Terraform. By integrating with Google Cloud Logging, you can take advantage of GCP's powerful log analysis, monitoring, and alerting capabilities.
+
+h2. Architecture Overview
+
+{panel:title=System Components}
+* Spring Boot Application with logback-more-appenders
+* Fluentd Agent (running on GCP VM) with google-cloud plugin
+* Google Cloud Logging (Log Explorer & Log Router)
+{panel}
+
+{panel:title=Data Flow}
+1. Application generates logs via Logback
+2. Logback-more-appenders forwards logs to Fluentd via TCP (port 24224)
+3. Fluentd processes and enriches logs
+4. Google Cloud Logging plugin sends logs to GCP
+5. Logs become available in GCP Log Explorer
+{panel}
+
+!architecture-diagram.png|align=center!
+
+h2. Prerequisites
+
+* Google Cloud Platform Account with:
+** Cloud Logging API enabled
+** Compute Engine API enabled
+** Service account with Logs Writer role
+* Terraform >= 1.0
+* Java Development Kit (JDK) 17
+* Maven >= 3.8
+* Basic understanding of Spring Boot and GCP services
+
+h2. Implementation Guide
+
+h3. 1. Spring Boot Application Configuration
+
+h4. 1.1 Maven Dependencies
+
+{code:xml}
+<dependencies>
+    <!-- Spring Boot Starter -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+
+    <!-- Logback More Appenders -->
+    <dependency>
+        <groupId>com.sndyuk</groupId>
+        <artifactId>logback-more-appenders</artifactId>
+        <version>1.8.8</version>
+    </dependency>
+
+    <!-- Fluent Logger -->
+    <dependency>
+        <groupId>org.fluentd</groupId>
+        <artifactId>fluent-logger</artifactId>
+        <version>0.3.4</version>
+    </dependency>
+</dependencies>
+{code}
+
+h4. 1.2 Logback Configuration (logback-spring.xml)
+
+{code:xml}
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluentLogbackAppender">
+        <tag>myapp</tag>
+        <remoteHost>localhost</remoteHost>
+        <port>24224</port>
+        <maxQueueSize>20</maxQueueSize>
+        
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcData>true</includeMdcData>
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSX</timestampPattern>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <thread>thread</thread>
+                <message>message</message>
+                <logger>logger</logger>
+                <level>severity</level>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="FLUENT"/>
+    </root>
+</configuration>
+{code}
+
+h3. 2. Infrastructure Setup with Terraform
+
+h4. 2.1 Create Terraform Configuration (main.tf)
+
+{panel:title=Service Account Options}
+You have two options for service account configuration:
+
+*Option 1: Use VM Default Service Account (Simpler but less secure)*
+* Uses the default compute service account
+* Requires no additional IAM configuration
+* Has broader permissions than necessary
+
+*Option 2: Create Dedicated Service Account (Recommended for production)*
+* Follows security best practices
+* Implements principle of least privilege
+* Better for audit and compliance
+{panel}
+
+{code:hcl}
+provider "google" {
+  project = var.project_id
+  region  = var.region
+  zone    = var.zone
+}
+
+# Option 1: Using VM Default Service Account
+resource "google_compute_instance" "fluentd_vm" {
+  name         = "fluentd-agent-vm"
+  machine_type = "e2-medium"
+  
+  boot_disk {
+    initialize_params {
+      image = "rhel-cloud/rhel-9"
+    }
+  }
+
+  network_interface {
+    network = "default"
+    access_config {}
+  }
+
+  metadata_startup_script = file("${path.module}/startup-script.sh")
+
+  # Use default compute service account
+  service_account {
+    scopes = ["cloud-platform"]
+  }
+
+  tags = ["fluentd-agent"]
+}
+
+# Option 2: Create Dedicated Service Account (Recommended)
+# Uncomment below for production use
+/*
+resource "google_service_account" "fluentd" {
+  account_id   = "fluentd-agent"
+  display_name = "Fluentd Logging Agent"
+}
+
+resource "google_project_iam_member" "logging_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.fluentd.email}"
+}
+
+# Update the service_account block in google_compute_instance with:
+# service_account {
+#   email  = google_service_account.fluentd.email
+#   scopes = ["cloud-platform"]
+# }
+*/
+
+# Firewall rule for Fluentd forward protocol
+resource "google_compute_firewall" "fluentd_forward" {
+  name    = "allow-fluentd-forward"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["24224"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]  # Restrict this in production
+  target_tags   = ["fluentd-agent"]
+}
+{code}
+
+h4. 2.2 Create Startup Script (startup-script.sh)
+
+{code:bash}
+#!/bin/bash
+
+# Enable EPEL repository for td-agent
+dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+
+# Add TD repository
+curl -fsSL https://toolbelt.treasuredata.com/sh/install-redhat-td-agent4.sh | sh
+
+# Install development tools for plugin installation
+dnf groupinstall -y "Development Tools"
+dnf install -y gcc-c++ ruby-devel
+
+# Install GCP plugin
+td-agent-gem install fluent-plugin-google-cloud
+
+# Configure Fluentd
+cat > /etc/td-agent/td-agent.conf << 'EOF'
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+<match **>
+  @type google_cloud
+  
+  # Use VM's built-in authentication
+  use_metadata_service true
+  
+  # Optimize for GCP Cloud Logging
+  adjust_timestamp true
+  
+  # Add VM metadata as labels
+  enable_monitoring_label true
+  
+  # Configure log structure
+  insert_id_key uuid  # Unique identifier for each log entry
+  detect_json true    # Parse JSON log messages
+  
+  <buffer>
+    @type memory
+    flush_interval 5s
+    chunk_limit_size 2M
+    total_limit_size 512M
+    retry_max_interval 30
+    retry_forever false
+  </buffer>
+</match>
+EOF
+
+# Configure SELinux for Fluentd
+setsebool -P antivirus_can_scan_system 1
+semanage port -a -t syslogd_port_t -p tcp 24224
+
+# Start and enable Fluentd service
+systemctl start td-agent
+systemctl enable td-agent
+
+# Open port in firewall
+firewall-cmd --permanent --add-port=24224/tcp
+firewall-cmd --reload
+{code}
+
+h4. 2.3 Complete Fluentd Configuration Example (fluent.conf)
+
+{panel:title=Configuration Sections}
+The configuration file is organized into several sections:
+* Input Configuration - Receives logs via forward protocol
+* GCP Cloud Logging Output - Sends logs to Google Cloud Logging
+* Buffer Settings - Controls memory usage and performance
+* Error Handling - Manages error logs
+{panel}
+
+{code:properties}
+# ===================== Input Configuration =====================
+# Receive input from forward protocol
+# Forward is Fluentd's native protocol providing high reliability and performance
+<source>
+  # Use forward input plugin
+  @type forward
+  # Listen port, default is 24224
+  port 24224
+  # Listen address, 0.0.0.0 accepts connections from all network interfaces
+  bind 0.0.0.0
+</source>
+
+# ===================== GCP Cloud Logging Output Configuration =====================
+<match **>
+  # Use Google Cloud Logging output plugin
+  @type google_cloud
+
+  # ===== GCP Authentication Configuration =====
+  # When running on GCP VM, automatically uses the instance's service account
+  # No need to explicitly configure project_id and credentials_json
+  use_metadata_service true
+  
+  # ===== Timestamp Processing =====
+  # Automatically convert Fluentd timestamp format to GCP Cloud Logging format
+  adjust_timestamp true
+  
+  # ===== Buffer Configuration =====
+  <buffer>
+    # Use memory buffer
+    # Memory buffer provides better performance when running on GCP VM
+    @type memory
+    
+    # Flush interval: send buffer data to GCP every 5 seconds
+    # Longer intervals recommended in production to reduce API calls
+    flush_interval 5s
+    
+    # Buffer size limits
+    chunk_limit_size 2M    # Single chunk size limit, recommended 2MB
+    total_limit_size 512M  # Total buffer size limit, adjust based on instance memory
+    
+    # Retry strategy configuration
+    retry_max_interval 30  # Maximum retry interval: 30 seconds
+    retry_forever false    # Whether to retry forever: no
+    
+    # Behavior when buffer is full
+    # block: block new writes, ensure no data loss
+    # drop_oldest: discard oldest data (suitable for monitoring data)
+    overflow_action block
+  </buffer>
+  
+  # ===== Optional Configuration (Commented) =====
+  # Set log writer identity
+  # writer_identity "serviceAccount:my-fluentd@my-project.iam.gserviceaccount.com"
+  
+  # Custom log labels
+  # labels {
+  #   "env": "production",
+  #   "service": "fluentd-appender-poc"
+  # }
+  
+  # Custom log format
+  # <format>
+  #   @type json
+  # </format>
+  
+  # Compression configuration (recommended for high traffic scenarios)
+  # compress gzip
+</match>
+
+# ===================== Monitoring Configuration (Optional) =====================
+# Monitoring API for viewing Fluentd operational status
+# Note: Consider security implications when enabling in production
+# <source>
+#   @type monitor_agent
+#   # Listen only on localhost
+#   bind 127.0.0.1
+#   # Monitoring interface port
+#   port 24220
+# </source>
+
+# ===================== Error Handling =====================
+# Handle Fluentd internal error logs
+<label @ERROR>
+  <match **>
+    # Output errors to stdout
+    @type stdout
+    <format>
+      @type json
+    </format>
+  </match>
+</label>
+{code}
+
+{panel:title=Configuration Notes}
+* The configuration uses memory buffer for better performance
+* Error logs are output to stdout for easy troubleshooting
+* Optional monitoring API is provided but commented out
+* GCP-specific optimizations are enabled
+* Buffer settings are tuned for typical usage
+{panel}
+
+h3. 3. Deployment Steps
+
+h4. 3.1 Infrastructure Deployment
+
+{code:bash}
+# Initialize and apply Terraform configuration
+terraform init
+terraform plan
+terraform apply
+{code}
+
+h4. 3.2 Application Deployment
+
+{code:bash}
+# Package and run the application
+mvn clean package
+java -jar target/your-application.jar
+{code}
+
+h3. 4. Verification and Monitoring
+
+h4. 4.1 Check Fluentd Agent Status
+{code:bash}
+sudo systemctl status td-agent
+{code}
+
+h4. 4.2 View Logs in GCP Console
+1. Navigate to Cloud Logging ([GCP Console|https://console.cloud.google.com/logs])
+2. Use the Log Explorer with these filters:
+{code:text}
+resource.type="gce_instance"
+resource.labels.instance_id="INSTANCE_ID"
+severity>=INFO
+{code}
+
+h4. 4.3 Create Log-based Metrics
+1. In Cloud Logging, click "Create Metric"
+2. Define filters for important events
+3. Use for monitoring and alerting
+
+h2. Troubleshooting Guide
+
+h3. Common Issues
+
+|| Issue || Solution ||
+| Logs not appearing in GCP | Check service account permissions and IAM roles |
+| Authentication errors | Verify VM's service account configuration |
+| High latency | Adjust buffer and flush settings in Fluentd config |
+| Memory pressure | Monitor and tune buffer size limits |
+
+h3. Useful Commands
+
+{code:bash}
+# View Fluentd logs for troubleshooting
+sudo tail -f /var/log/td-agent/td-agent.log
+
+# Check Fluentd configuration
+sudo td-agent --dry-run -c /etc/td-agent/td-agent.conf
+
+# View detailed GCP authentication status
+sudo curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+{code}
+
+h2. Best Practices
+
+* Use structured logging with consistent field names
+* Implement proper error handling with meaningful error messages
+* Set appropriate log levels (ERROR for exceptions, INFO for important events)
+* Use log correlation IDs for request tracing
+* Implement rate limiting to prevent log flooding
+* Monitor Fluentd memory usage and performance
+* Regularly update Fluentd and its plugins
+
+h2. Security Considerations
+
+* Use least privilege service accounts
+* Implement network security (firewall rules, VPC)
+* Encrypt sensitive data before logging
+* Regularly rotate service account keys
+* Monitor and audit log access
+* Use log exclusion filters for sensitive data
+
+h2. References
+
+* [Spring Boot Documentation|https://docs.spring.io/spring-boot/docs/current/reference/html/]
+* [Fluentd Documentation|https://docs.fluentd.org/]
+* [Google Cloud Logging|https://cloud.google.com/logging/docs]
+* [Terraform GCP Provider|https://registry.terraform.io/providers/hashicorp/google/latest/docs]
+* [Cloud Logging Quotas|https://cloud.google.com/logging/quotas] 
