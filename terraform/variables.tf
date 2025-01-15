@@ -101,4 +101,70 @@ variable "additional_tags" {
   description = "Additional network tags for the instance"
   type        = list(string)
   default     = []
+}
+
+variable "instance_count" {
+  description = "The number of instances to maintain in the managed instance group"
+  type        = number
+  default     = 2
+}
+
+variable "enable_autoscaling" {
+  description = "Whether to enable autoscaling for the managed instance group"
+  type        = bool
+  default     = false
+}
+
+variable "min_replicas" {
+  description = "Minimum number of instances in the managed instance group when autoscaling is enabled"
+  type        = number
+  default     = 1
+}
+
+variable "max_replicas" {
+  description = "Maximum number of instances in the managed instance group when autoscaling is enabled"
+  type        = number
+  default     = 5
+}
+
+variable "cooldown_period" {
+  description = "The number of seconds that the autoscaler should wait before it starts collecting information"
+  type        = number
+  default     = 60
+}
+
+variable "cpu_utilization_target" {
+  description = "The target CPU utilization that the autoscaler should maintain (0.0 to 1.0)"
+  type        = number
+  default     = 0.7
+}
+
+variable "health_check_interval" {
+  description = "How often (in seconds) to send a health check"
+  type        = number
+  default     = 30
+}
+
+variable "health_check_timeout" {
+  description = "How long (in seconds) to wait before claiming failure"
+  type        = number
+  default     = 5
+}
+
+variable "health_check_healthy_threshold" {
+  description = "A so-far unhealthy instance will be marked healthy after this many consecutive successes"
+  type        = number
+  default     = 2
+}
+
+variable "health_check_unhealthy_threshold" {
+  description = "A so-far healthy instance will be marked unhealthy after this many consecutive failures"
+  type        = number
+  default     = 3
+}
+
+variable "auto_healing_initial_delay" {
+  description = "Time to wait after instance creation before checking health"
+  type        = number
+  default     = 300
 } 

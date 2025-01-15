@@ -93,9 +93,184 @@ h4. 1.2 Logback Configuration (logback-spring.xml)
 </configuration>
 {code}
 
-h3. 2. Infrastructure Setup with Terraform
+h2. Fluentd Configuration Examples
 
-h4. 2.1 Create Terraform Configuration (main.tf)
+This section provides three different Fluentd configuration examples for various use cases.
+
+h3. Example 1: File Output Configuration
+
+This configuration demonstrates how to output logs to local files, which is useful for development and debugging.
+
+{code:properties}
+# Input Configuration
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+# File Output Configuration
+<match **>
+  @type file
+  
+  # Base directory to output files
+  path /var/log/fluentd/app
+  
+  # Output file format
+  <format>
+    @type json
+    time_key timestamp
+  </format>
+  
+  # File rotation settings
+  append true
+  <buffer>
+    @type file
+    path /var/log/fluentd/app.*.buffer
+    flush_interval 5s
+    chunk_limit_size 2M
+  </buffer>
+  
+  # Time sliced output settings
+  time_slice_format %Y%m%d
+  time_slice_wait 10m
+  time_format %Y%m%dT%H%M%S%z
+</match>
+
+# Error Handling
+<label @ERROR>
+  <match **>
+    @type file
+    path /var/log/fluentd/error
+    format json
+  </match>
+</label>
+{code}
+
+h3. Example 2: Google Cloud Logging Output Configuration
+
+This configuration shows how to forward logs to Google Cloud Logging.
+
+{code:properties}
+# Input Configuration
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+# GCP Cloud Logging Output Configuration
+<match **>
+  @type google_cloud
+  
+  # GCP Authentication (VM-based)
+  use_metadata_service true
+  
+  # Timestamp Processing
+  adjust_timestamp true
+  
+  # Resource Configuration
+  resource_type "generic_task"
+  resource_labels {
+    "project_id": "YOUR_PROJECT_ID",
+    "location": "YOUR_LOCATION",
+    "namespace": "default",
+    "job": "fluentd-agent"
+  }
+  
+  # Buffer Configuration
+  <buffer>
+    @type memory
+    flush_interval 5s
+    chunk_limit_size 2M
+    total_limit_size 512M
+    retry_max_interval 30
+    retry_forever false
+    overflow_action block
+  </buffer>
+</match>
+{code}
+
+h3. Example 3: Multi-destination Output Configuration
+
+This configuration demonstrates how to output logs to both local files and Google Cloud Logging simultaneously.
+
+{code:properties}
+# Input Configuration
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+# Copy plugin to duplicate logs to multiple destinations
+<match **>
+  @type copy
+  
+  # File Output
+  <store>
+    @type file
+    path /var/log/fluentd/app
+    
+    <format>
+      @type json
+      time_key timestamp
+    </format>
+    
+    <buffer>
+      @type file
+      path /var/log/fluentd/app.*.buffer
+      flush_interval 5s
+      chunk_limit_size 2M
+    </buffer>
+  </store>
+  
+  # GCP Cloud Logging Output
+  <store>
+    @type google_cloud
+    use_metadata_service true
+    adjust_timestamp true
+    
+    resource_type "generic_task"
+    resource_labels {
+      "project_id": "YOUR_PROJECT_ID",
+      "location": "YOUR_LOCATION",
+      "namespace": "default",
+      "job": "fluentd-agent"
+    }
+    
+    <buffer>
+      @type memory
+      flush_interval 5s
+      chunk_limit_size 2M
+      total_limit_size 512M
+      retry_max_interval 30
+      retry_forever false
+      overflow_action block
+    </buffer>
+  </store>
+  
+  # Error handling for copy plugin
+  <store>
+    @type secondary_file
+    directory /var/log/fluentd/error
+    <buffer>
+      @type file
+      path /var/log/fluentd/error.*.buffer
+      retry_forever false
+      retry_max_times 3
+    </buffer>
+  </store>
+</match>
+{code}
+
+h2. Infrastructure Setup with Terraform
+
+h3. 1. Terraform Configuration Overview
+
+The infrastructure setup is managed using Terraform, which provides Infrastructure as Code (IaC) capabilities for GCP resources. We use Managed Instance Group (MIG) to ensure high availability and automatic scaling of Fluentd agents.
+
+h3. 2. Service Account Configuration Options
 
 {panel:title=Service Account Options}
 You have two options for service account configuration:
@@ -111,60 +286,132 @@ You have two options for service account configuration:
 * Better for audit and compliance
 {panel}
 
+h3. 3. Terraform Resource Configurations
+
+h4. 3.1 Provider Configuration (main.tf)
+
 {code:hcl}
 provider "google" {
   project = var.project_id
   region  = var.region
   zone    = var.zone
 }
+{code}
 
-# Option 1: Using VM Default Service Account
-resource "google_compute_instance" "fluentd_vm" {
-  name         = "fluentd-agent-vm"
+h4. 3.2 Instance Template Configuration
+
+{code:hcl}
+# Create an instance template for Fluentd VMs
+resource "google_compute_instance_template" "fluentd" {
+  name_prefix  = "fluentd-agent-template-"
   machine_type = "e2-medium"
   
-  boot_disk {
-    initialize_params {
-      image = "rhel-cloud/rhel-9"
-    }
+  # Instance template will be recreated when startup script changes
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  disk {
+    source_image = "rhel-cloud/rhel-9"
+    auto_delete  = true
+    boot         = true
+    
+    # Optional: Specify disk size and type
+    disk_size_gb = 20
+    disk_type    = "pd-standard"
   }
 
   network_interface {
     network = "default"
-    access_config {}
+    access_config {}  # Gives the instance a public IP
   }
 
-  metadata_startup_script = file("${path.module}/startup-script.sh")
+  metadata = {
+    startup-script = file("${path.module}/startup-script.sh")
+  }
 
-  # Use default compute service account
+  # Use dedicated service account (recommended)
   service_account {
+    email  = google_service_account.fluentd.email
     scopes = ["cloud-platform"]
   }
 
   tags = ["fluentd-agent"]
+
+  # Optional: Add labels for better resource management
+  labels = {
+    environment = var.environment
+    service     = "fluentd"
+  }
 }
 
-# Option 2: Create Dedicated Service Account (Recommended)
-# Uncomment below for production use
+h4. 3.3 Managed Instance Group Configuration
+
+{code:hcl}
+# Create a health check for the MIG
+resource "google_compute_health_check" "fluentd" {
+  name                = "fluentd-health-check"
+  check_interval_sec  = 30
+  timeout_sec         = 5
+  healthy_threshold   = 2
+  unhealthy_threshold = 3
+
+  tcp_health_check {
+    port = 24224  # Fluentd forward protocol port
+  }
+}
+
+# Create the Managed Instance Group
+resource "google_compute_region_instance_group_manager" "fluentd" {
+  name = "fluentd-agent-mig"
+
+  base_instance_name = "fluentd-agent"
+  region            = var.region
+
+  version {
+    instance_template = google_compute_instance_template.fluentd.id
+  }
+
+  # Configure auto-healing
+  auto_healing_policies {
+    health_check      = google_compute_health_check.fluentd.id
+    initial_delay_sec = 300  # 5 minutes to allow startup
+  }
+
+  # Configure target size
+  target_size = var.fluentd_instance_count
+
+  # Optional: Configure auto-scaling
+  /*
+  named_port {
+    name = "fluentd-forward"
+    port = 24224
+  }
+  */
+}
+
+# Optional: Configure auto-scaling policy
 /*
-resource "google_service_account" "fluentd" {
-  account_id   = "fluentd-agent"
-  display_name = "Fluentd Logging Agent"
-}
+resource "google_compute_region_autoscaler" "fluentd" {
+  name   = "fluentd-autoscaler"
+  region = var.region
+  target = google_compute_region_instance_group_manager.fluentd.id
 
-resource "google_project_iam_member" "logging_writer" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.fluentd.email}"
-}
+  autoscaling_policy {
+    max_replicas    = 5
+    min_replicas    = 1
+    cooldown_period = 60
 
-# Update the service_account block in google_compute_instance with:
-# service_account {
-#   email  = google_service_account.fluentd.email
-#   scopes = ["cloud-platform"]
-# }
+    cpu_utilization {
+      target = 0.7  # Target CPU utilization of 70%
+    }
+  }
+}
 */
 
+h4. 3.4 Network Configuration
+
+{code:hcl}
 # Firewall rule for Fluentd forward protocol
 resource "google_compute_firewall" "fluentd_forward" {
   name    = "allow-fluentd-forward"
@@ -175,12 +422,112 @@ resource "google_compute_firewall" "fluentd_forward" {
     ports    = ["24224"]
   }
 
-  source_ranges = ["0.0.0.0/0"]  # Restrict this in production
+  # Restrict source ranges based on your network architecture
+  source_ranges = var.allowed_source_ranges
+  target_tags   = ["fluentd-agent"]
+}
+
+# Firewall rule for health checks
+resource "google_compute_firewall" "fluentd_health_check" {
+  name    = "allow-health-check"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["24224"]
+  }
+
+  # Allow health check probes
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
   target_tags   = ["fluentd-agent"]
 }
 {code}
 
-h4. 2.2 Create Startup Script (startup-script.sh)
+h4. 3.5 Load Balancer Configuration (Optional)
+
+{code:hcl}
+# Create a regional TCP load balancer for Fluentd
+resource "google_compute_forwarding_rule" "fluentd" {
+  name                  = "fluentd-lb"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.fluentd.id
+  ports                 = ["24224"]
+  network              = "default"
+  subnetwork           = "default"
+}
+
+resource "google_compute_region_backend_service" "fluentd" {
+  name                  = "fluentd-backend"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "INTERNAL"
+  health_checks         = [google_compute_health_check.fluentd.id]
+
+  backend {
+    group = google_compute_region_instance_group_manager.fluentd.instance_group
+  }
+}
+{code}
+
+h4. 3.6 Variables Configuration (variables.tf)
+
+{code:hcl}
+variable "project_id" {
+  description = "The GCP project ID"
+  type        = string
+}
+
+variable "region" {
+  description = "The GCP region"
+  type        = string
+}
+
+variable "zone" {
+  description = "The GCP zone"
+  type        = string
+}
+
+variable "environment" {
+  description = "Environment name (e.g., prod, staging, dev)"
+  type        = string
+}
+
+variable "fluentd_instance_count" {
+  description = "Number of Fluentd instances to maintain"
+  type        = number
+  default     = 2
+}
+
+variable "allowed_source_ranges" {
+  description = "List of CIDR ranges allowed to connect to Fluentd"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]  # Restrict this in production
+}
+{code}
+
+h4. 3.7 Outputs Configuration (outputs.tf)
+
+{code:hcl}
+output "instance_group" {
+  description = "The self-link of the Managed Instance Group"
+  value       = google_compute_region_instance_group_manager.fluentd.self_link
+}
+
+output "load_balancer_ip" {
+  description = "The internal IP address of the load balancer"
+  value       = google_compute_forwarding_rule.fluentd.ip_address
+}
+
+output "service_account_email" {
+  description = "The email of the service account used by Fluentd instances"
+  value       = google_service_account.fluentd.email
+}
+{code}
+
+h3. 4. VM Startup Script
+
+The startup script (startup-script.sh) handles the installation and configuration of Fluentd on the VM:
 
 {code:bash}
 #!/bin/bash
@@ -200,37 +547,7 @@ td-agent-gem install fluent-plugin-google-cloud
 
 # Configure Fluentd
 cat > /etc/td-agent/td-agent.conf << 'EOF'
-<source>
-  @type forward
-  port 24224
-  bind 0.0.0.0
-</source>
-
-<match **>
-  @type google_cloud
-  
-  # Use VM's built-in authentication
-  use_metadata_service true
-  
-  # Optimize for GCP Cloud Logging
-  adjust_timestamp true
-  
-  # Add VM metadata as labels
-  enable_monitoring_label true
-  
-  # Configure log structure
-  insert_id_key uuid  # Unique identifier for each log entry
-  detect_json true    # Parse JSON log messages
-  
-  <buffer>
-    @type memory
-    flush_interval 5s
-    chunk_limit_size 2M
-    total_limit_size 512M
-    retry_max_interval 30
-    retry_forever false
-  </buffer>
-</match>
+# Configuration will be added here based on chosen example
 EOF
 
 # Configure SELinux for Fluentd
@@ -246,145 +563,45 @@ firewall-cmd --permanent --add-port=24224/tcp
 firewall-cmd --reload
 {code}
 
-h4. 2.3 Complete Fluentd Configuration Example (fluent.conf)
+h3. 5. Deployment Steps
 
-{panel:title=Configuration Sections}
-The configuration file is organized into several sections:
-* Input Configuration - Receives logs via forward protocol
-* GCP Cloud Logging Output - Sends logs to Google Cloud Logging
-* Buffer Settings - Controls memory usage and performance
-* Error Handling - Manages error logs
-{panel}
-
-{code:properties}
-# ===================== Input Configuration =====================
-# Receive input from forward protocol
-# Forward is Fluentd's native protocol providing high reliability and performance
-<source>
-  # Use forward input plugin
-  @type forward
-  # Listen port, default is 24224
-  port 24224
-  # Listen address, 0.0.0.0 accepts connections from all network interfaces
-  bind 0.0.0.0
-</source>
-
-# ===================== GCP Cloud Logging Output Configuration =====================
-<match **>
-  # Use Google Cloud Logging output plugin
-  @type google_cloud
-
-  # ===== GCP Authentication Configuration =====
-  # When running on GCP VM, automatically uses the instance's service account
-  # No need to explicitly configure project_id and credentials_json
-  use_metadata_service true
-  
-  # ===== Timestamp Processing =====
-  # Automatically convert Fluentd timestamp format to GCP Cloud Logging format
-  adjust_timestamp true
-  
-  # ===== Buffer Configuration =====
-  <buffer>
-    # Use memory buffer
-    # Memory buffer provides better performance when running on GCP VM
-    @type memory
-    
-    # Flush interval: send buffer data to GCP every 5 seconds
-    # Longer intervals recommended in production to reduce API calls
-    flush_interval 5s
-    
-    # Buffer size limits
-    chunk_limit_size 2M    # Single chunk size limit, recommended 2MB
-    total_limit_size 512M  # Total buffer size limit, adjust based on instance memory
-    
-    # Retry strategy configuration
-    retry_max_interval 30  # Maximum retry interval: 30 seconds
-    retry_forever false    # Whether to retry forever: no
-    
-    # Behavior when buffer is full
-    # block: block new writes, ensure no data loss
-    # drop_oldest: discard oldest data (suitable for monitoring data)
-    overflow_action block
-  </buffer>
-  
-  # ===== Optional Configuration (Commented) =====
-  # Set log writer identity
-  # writer_identity "serviceAccount:my-fluentd@my-project.iam.gserviceaccount.com"
-  
-  # Custom log labels
-  # labels {
-  #   "env": "production",
-  #   "service": "fluentd-appender-poc"
-  # }
-  
-  # Custom log format
-  # <format>
-  #   @type json
-  # </format>
-  
-  # Compression configuration (recommended for high traffic scenarios)
-  # compress gzip
-</match>
-
-# ===================== Monitoring Configuration (Optional) =====================
-# Monitoring API for viewing Fluentd operational status
-# Note: Consider security implications when enabling in production
-# <source>
-#   @type monitor_agent
-#   # Listen only on localhost
-#   bind 127.0.0.1
-#   # Monitoring interface port
-#   port 24220
-# </source>
-
-# ===================== Error Handling =====================
-# Handle Fluentd internal error logs
-<label @ERROR>
-  <match **>
-    # Output errors to stdout
-    @type stdout
-    <format>
-      @type json
-    </format>
-  </match>
-</label>
-{code}
-
-{panel:title=Configuration Notes}
-* The configuration uses memory buffer for better performance
-* Error logs are output to stdout for easy troubleshooting
-* Optional monitoring API is provided but commented out
-* GCP-specific optimizations are enabled
-* Buffer settings are tuned for typical usage
-{panel}
-
-h3. 3. Deployment Steps
-
-h4. 3.1 Infrastructure Deployment
+h4. 5.1 Infrastructure Deployment
 
 {code:bash}
-# Initialize and apply Terraform configuration
+# Initialize Terraform
 terraform init
+
+# Review the execution plan
 terraform plan
+
+# Apply the configuration
 terraform apply
 {code}
 
-h4. 3.2 Application Deployment
+h4. 5.2 Application Deployment
 
 {code:bash}
-# Package and run the application
+# Package the application
 mvn clean package
+
+# Run the application
 java -jar target/your-application.jar
 {code}
 
-h3. 4. Verification and Monitoring
+h2. Verification and Monitoring
 
-h4. 4.1 Check Fluentd Agent Status
+h3. 1. Fluentd Agent Status
+
 {code:bash}
+# Check Fluentd service status
 sudo systemctl status td-agent
+
+# View Fluentd logs
+sudo tail -f /var/log/td-agent/td-agent.log
 {code}
 
-h4. 4.2 View Logs in GCP Console
+h3. 2. GCP Cloud Logging
+
 1. Navigate to Cloud Logging ([GCP Console|https://console.cloud.google.com/logs])
 2. Use the Log Explorer with these filters:
 {code:text}
@@ -393,10 +610,18 @@ resource.labels.instance_id="INSTANCE_ID"
 severity>=INFO
 {code}
 
-h4. 4.3 Create Log-based Metrics
-1. In Cloud Logging, click "Create Metric"
-2. Define filters for important events
-3. Use for monitoring and alerting
+h3. 3. Monitoring and Metrics
+
+1. Create Log-based Metrics:
+* Navigate to Cloud Logging
+* Click "Create Metric"
+* Define filters for important events
+* Configure metric type and parameters
+
+2. Set up Alerts:
+* Navigate to Cloud Monitoring
+* Create alert policies based on log-based metrics
+* Configure notification channels
 
 h2. Troubleshooting Guide
 

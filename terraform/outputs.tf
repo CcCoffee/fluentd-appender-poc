@@ -14,7 +14,7 @@ output "instance_ip_external" {
 }
 
 output "service_account_email" {
-  description = "The email of the service account used by the instance"
+  description = "The email of the service account used by Fluentd instances"
   value       = var.create_service_account ? google_service_account.fluentd[0].email : var.service_account_email
 }
 
@@ -31,4 +31,34 @@ output "network_name" {
 output "subnet_name" {
   description = "The name of the subnet being used"
   value       = var.create_network ? google_compute_subnetwork.fluentd_subnet[0].name : var.subnet_name
+}
+
+output "instance_group_manager" {
+  description = "The name of the instance group manager"
+  value       = google_compute_region_instance_group_manager.fluentd.name
+}
+
+output "instance_group" {
+  description = "The instance group URL"
+  value       = google_compute_region_instance_group_manager.fluentd.instance_group
+}
+
+output "instance_template" {
+  description = "The name of the instance template"
+  value       = google_compute_instance_template.fluentd.name
+}
+
+output "load_balancer_ip" {
+  description = "The internal IP address of the load balancer"
+  value       = google_compute_forwarding_rule.fluentd.ip_address
+}
+
+output "health_check" {
+  description = "The name of the health check"
+  value       = google_compute_health_check.fluentd.name
+}
+
+output "autoscaler" {
+  description = "The name of the autoscaler (if enabled)"
+  value       = var.enable_autoscaling ? google_compute_region_autoscaler.fluentd[0].name : null
 } 

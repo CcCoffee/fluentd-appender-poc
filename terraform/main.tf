@@ -60,22 +60,40 @@ resource "google_compute_firewall" "fluentd_forward" {
   target_tags   = ["fluentd-agent"]
 }
 
-# Fluentd VM instance
-resource "google_compute_instance" "fluentd_vm" {
-  name         = var.instance_name
-  machine_type = var.machine_type
-  zone         = var.zone
+# Firewall rule for health checks
+resource "google_compute_firewall" "fluentd_health_check" {
+  name    = "allow-health-check"
+  network = var.create_network ? google_compute_network.fluentd_network[0].name : var.network_name
 
-  boot_disk {
-    initialize_params {
-      image = var.instance_image
-      size  = var.boot_disk_size
-      type  = var.boot_disk_type
-    }
+  allow {
+    protocol = "tcp"
+    ports    = ["24224"]
+  }
+
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  target_tags   = ["fluentd-agent"]
+}
+
+# Create instance template for Fluentd VMs
+resource "google_compute_instance_template" "fluentd" {
+  name_prefix  = "fluentd-agent-template-"
+  machine_type = var.machine_type
+  
+  # Instance template will be recreated when startup script changes
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  disk {
+    source_image = var.instance_image
+    auto_delete  = true
+    boot         = true
+    disk_size_gb = var.boot_disk_size
+    disk_type    = var.boot_disk_type
   }
 
   network_interface {
-    network = var.create_network ? google_compute_network.fluentd_network[0].name : var.network_name
+    network    = var.create_network ? google_compute_network.fluentd_network[0].name : var.network_name
     subnetwork = var.create_network ? google_compute_subnetwork.fluentd_subnet[0].name : var.subnet_name
 
     dynamic "access_config" {
@@ -96,6 +114,84 @@ resource "google_compute_instance" "fluentd_vm" {
   }
 
   tags = concat(["fluentd-agent"], var.additional_tags)
+}
 
-  allow_stopping_for_update = true
+# Create health check for the MIG
+resource "google_compute_health_check" "fluentd" {
+  name                = "fluentd-health-check"
+  check_interval_sec  = var.health_check_interval
+  timeout_sec         = var.health_check_timeout
+  healthy_threshold   = var.health_check_healthy_threshold
+  unhealthy_threshold = var.health_check_unhealthy_threshold
+
+  tcp_health_check {
+    port = 24224
+  }
+}
+
+# Create the Managed Instance Group
+resource "google_compute_region_instance_group_manager" "fluentd" {
+  name = "fluentd-agent-mig"
+
+  base_instance_name = var.instance_name
+  region            = var.region
+
+  version {
+    instance_template = google_compute_instance_template.fluentd.id
+  }
+
+  # Configure auto-healing
+  auto_healing_policies {
+    health_check      = google_compute_health_check.fluentd.id
+    initial_delay_sec = var.auto_healing_initial_delay
+  }
+
+  # Configure target size
+  target_size = var.instance_count
+
+  named_port {
+    name = "fluentd-forward"
+    port = 24224
+  }
+}
+
+# Optional: Configure auto-scaling
+resource "google_compute_region_autoscaler" "fluentd" {
+  count  = var.enable_autoscaling ? 1 : 0
+  name   = "fluentd-autoscaler"
+  region = var.region
+  target = google_compute_region_instance_group_manager.fluentd.id
+
+  autoscaling_policy {
+    max_replicas    = var.max_replicas
+    min_replicas    = var.min_replicas
+    cooldown_period = var.cooldown_period
+
+    cpu_utilization {
+      target = var.cpu_utilization_target
+    }
+  }
+}
+
+# Create internal load balancer
+resource "google_compute_forwarding_rule" "fluentd" {
+  name                  = "fluentd-lb"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.fluentd.id
+  ports                 = ["24224"]
+  network              = var.create_network ? google_compute_network.fluentd_network[0].name : var.network_name
+  subnetwork           = var.create_network ? google_compute_subnetwork.fluentd_subnet[0].name : var.subnet_name
+}
+
+resource "google_compute_region_backend_service" "fluentd" {
+  name                  = "fluentd-backend"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "INTERNAL"
+  health_checks         = [google_compute_health_check.fluentd.id]
+
+  backend {
+    group = google_compute_region_instance_group_manager.fluentd.instance_group
+  }
 } 
