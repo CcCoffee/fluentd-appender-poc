@@ -13,19 +13,20 @@ provider "google" {
   region  = var.region
 }
 
+# Use default compute service account instead of creating a new one
 # Create a custom service account for logging instances
-resource "google_service_account" "logging_service_account" {
-  account_id   = "logging-agent-sa"
-  display_name = "Logging Agent Service Account"
-  description  = "Service account for GCE instances running google-fluentd logging agent"
-}
+# resource "google_service_account" "logging_service_account" {
+#   account_id   = "logging-agent-sa"
+#   display_name = "Logging Agent Service Account"
+#   description  = "Service account for GCE instances running google-fluentd logging agent"
+# }
 
 # Grant necessary permissions to the service account
-resource "google_project_iam_member" "logging_writer" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.logging_service_account.email}"
-}
+# resource "google_project_iam_member" "logging_writer" {
+#   project = var.project_id
+#   role    = "roles/logging.logWriter"
+#   member  = "serviceAccount:${google_service_account.logging_service_account.email}"
+# }
 
 # Create instance template
 resource "google_compute_instance_template" "logging_template" {
@@ -50,7 +51,8 @@ resource "google_compute_instance_template" "logging_template" {
   }
 
   service_account {
-    email  = google_service_account.logging_service_account.email
+    # Use default compute service account
+    # email  = google_service_account.logging_service_account.email
     scopes = ["cloud-platform"]
   }
 

@@ -9,7 +9,7 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 - Built-in google-fluentd on each instance
 - TCP port 24224 for log forwarding (internal access only)
 - Automatic health checks and instance recovery
-- Custom service account with minimal permissions
+- Using default compute service account
 - RHEL 8 base image with SELinux and firewall configuration
 
 ## Prerequisites
@@ -87,6 +87,7 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 - Automatic health checks (TCP port 24224)
 - Auto-healing enabled
 - Base image: RHEL 8 with SELinux enabled
+- Using default compute service account with cloud-platform scope
 
 ### Internal Load Balancer
 - TCP load balancing for port 24224
@@ -224,7 +225,7 @@ terraform destroy
    - No public IP exposure ensures better security
    - Restrict `allowed_source_ranges` to your application networks
    - Use IAP or bastion host for instance access
-   - Regularly review service account permissions
+   - Default compute service account has necessary permissions for logging
    - Monitor firewall rule changes
 
 3. **Monitoring**
