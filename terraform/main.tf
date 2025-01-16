@@ -13,22 +13,23 @@ provider "google" {
   region  = var.region
 }
 
-# Create a custom service account for the instances
-resource "google_service_account" "app_service_account" {
-  account_id   = "app-service-account"
-  display_name = "Application Service Account"
+# Create a custom service account for logging instances
+resource "google_service_account" "logging_service_account" {
+  account_id   = "logging-agent-sa"
+  display_name = "Logging Agent Service Account"
+  description  = "Service account for GCE instances running google-fluentd logging agent"
 }
 
 # Grant necessary permissions to the service account
 resource "google_project_iam_member" "logging_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.app_service_account.email}"
+  member  = "serviceAccount:${google_service_account.logging_service_account.email}"
 }
 
 # Create instance template
-resource "google_compute_instance_template" "app_template" {
-  name_prefix  = "app-template-"
+resource "google_compute_instance_template" "logging_template" {
+  name_prefix  = "logging-agent-template-"
   machine_type = var.machine_type
   
   disk {
@@ -49,11 +50,11 @@ resource "google_compute_instance_template" "app_template" {
   }
 
   service_account {
-    email  = google_service_account.app_service_account.email
+    email  = google_service_account.logging_service_account.email
     scopes = ["cloud-platform"]
   }
 
-  tags = ["app-instance"]
+  tags = ["logging-agent"]
 
   lifecycle {
     create_before_destroy = true
@@ -61,8 +62,8 @@ resource "google_compute_instance_template" "app_template" {
 }
 
 # Create health check
-resource "google_compute_health_check" "app_health_check" {
-  name               = "app-health-check"
+resource "google_compute_health_check" "logging_health_check" {
+  name               = "logging-agent-health-check"
   check_interval_sec = 30
   timeout_sec        = 5
   
@@ -72,14 +73,14 @@ resource "google_compute_health_check" "app_health_check" {
 }
 
 # Create MIG
-resource "google_compute_region_instance_group_manager" "app_group" {
-  name = "app-instance-group"
+resource "google_compute_region_instance_group_manager" "logging_group" {
+  name = "logging-agent-group"
 
-  base_instance_name = "app"
+  base_instance_name = "logging-agent"
   region            = var.region
 
   version {
-    instance_template = google_compute_instance_template.app_template.id
+    instance_template = google_compute_instance_template.logging_template.id
   }
 
   named_port {
@@ -90,14 +91,14 @@ resource "google_compute_region_instance_group_manager" "app_group" {
   target_size = 4  # 固定4个实例
 
   auto_healing_policies {
-    health_check      = google_compute_health_check.app_health_check.id
+    health_check      = google_compute_health_check.logging_health_check.id
     initial_delay_sec = 300
   }
 }
 
 # Create firewall rule for Fluentd forward protocol
-resource "google_compute_firewall" "fluentd_forward" {
-  name    = "allow-fluentd-forward"
+resource "google_compute_firewall" "logging_forward" {
+  name    = "allow-logging-forward"
   network = "default"
 
   allow {
@@ -106,5 +107,5 @@ resource "google_compute_firewall" "fluentd_forward" {
   }
 
   source_ranges = var.allowed_source_ranges
-  target_tags   = ["app-instance"]
-} 
+  target_tags   = ["logging-agent"]
+}

@@ -61,4 +61,19 @@ output "health_check" {
 output "autoscaler" {
   description = "The name of the autoscaler (if enabled)"
   value       = var.enable_autoscaling ? google_compute_region_autoscaler.fluentd[0].name : null
+}
+
+output "logging_instance_group" {
+  description = "The logging agent instance group URL"
+  value       = google_compute_region_instance_group_manager.logging_group.instance_group
+}
+
+output "logging_service_account" {
+  description = "The service account email used by logging agent instances"
+  value       = google_service_account.logging_service_account.email
+}
+
+output "logging_instances_self_links" {
+  description = "List of logging agent instance self-links in the group"
+  value       = google_compute_region_instance_group_manager.logging_group.instance_group
 } 
