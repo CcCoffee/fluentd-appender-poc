@@ -1,234 +1,198 @@
-# Fluentd GCP Cloud Logging Terraform Module
+# GCP Logging Infrastructure with google-fluentd
 
-This Terraform module deploys a Fluentd logging agent on Google Cloud Platform (GCP) that forwards logs to Cloud Logging. The module sets up a RHEL-based VM instance with Fluentd configured to receive logs via the forward protocol and send them to GCP Cloud Logging.
+This Terraform configuration creates a Google Cloud Platform (GCP) Managed Instance Group (MIG) with 4 instances, each running google-fluentd to collect and forward application logs to Cloud Logging.
 
-## Features
+## Architecture Overview
 
-- Deploys a RHEL 9 VM instance with Fluentd agent
-- Configures Fluentd for GCP Cloud Logging integration
-- Supports both default and custom service accounts
-- Flexible network configuration (existing or new VPC)
-- Includes security best practices
-- Automated setup with startup scripts
+- 4 GCE VM instances in a Managed Instance Group (internal network only)
+- Built-in google-fluentd on each instance
+- TCP port 24224 for log forwarding (internal access only)
+- Automatic health checks and instance recovery
+- Custom service account with minimal permissions
+- RHEL 8 base image with SELinux and firewall configuration
 
 ## Prerequisites
 
 - Terraform >= 1.0
-- Google Cloud Platform account
-- Required GCP APIs enabled:
+- Google Cloud SDK
+- GCP Project with required APIs enabled:
   - Compute Engine API
   - Cloud Logging API
   - IAM API
-- Appropriate GCP permissions to create:
-  - VM instances
-  - Service accounts
-  - IAM roles
-  - VPC networks (if creating new network)
 
-## Variable Assignment Methods
+## Configuration Files
 
-### 1. Using terraform.tfvars (Recommended)
+- `main.tf`: Main infrastructure configuration
+- `variables.tf`: Variable definitions
+- `outputs.tf`: Output definitions
+- `terraform.tfvars`: Variable values (create from example)
+- `scripts/`:
+  - `startup-script.sh`: VM initialization script
+  - `app-forward.conf`: google-fluentd configuration
 
-Create a `terraform.tfvars` file in your working directory:
+## Quick Start
 
-```hcl
-# Required variables
-project_id = "your-project-id"
-region     = "asia-east1"
-zone       = "asia-east1-a"
+1. **Prepare Configuration**
 
-# Service account configuration
-create_service_account = true
-service_account_id    = "custom-fluentd-agent"
+   ```bash
+   # Copy and edit the variables file
+   cp terraform.tfvars.example terraform.tfvars
+   
+   # Edit with your values
+   vim terraform.tfvars
+   ```
 
-# Network configuration
-create_network = true
-network_name   = "logging-network"
-subnet_name    = "logging-subnet"
-subnet_cidr    = "10.0.1.0/24"
+2. **Initialize Terraform**
 
-# Instance configuration
-instance_name   = "prod-fluentd-agent"
-machine_type    = "e2-small"
-boot_disk_size  = 30
-```
+   ```bash
+   terraform init
+   ```
 
-### 2. Using Command Line Flags
+3. **Review the Plan**
 
-You can pass variables directly via command line:
+   ```bash
+   terraform plan
+   ```
 
-```bash
-terraform apply \
-  -var="project_id=your-project-id" \
-  -var="region=asia-east1" \
-  -var="zone=asia-east1-a" \
-  -var="create_network=true"
-```
+4. **Apply Configuration**
 
-### 3. Using Environment Variables
+   ```bash
+   terraform apply
+   ```
 
-Export variables with `TF_VAR_` prefix:
+## Variables
 
-```bash
-export TF_VAR_project_id="your-project-id"
-export TF_VAR_region="asia-east1"
-export TF_VAR_zone="asia-east1-a"
-terraform apply
-```
-
-### 4. Using auto.tfvars Files
-
-Create files with names ending in `.auto.tfvars` or `.auto.tfvars.json`:
-
-```hcl
-# production.auto.tfvars
-project_id = "prod-project-id"
-region     = "asia-east1"
-zone       = "asia-east1-a"
-```
-
-### Variable Precedence (Highest to Lowest)
-
-1. Command line flags (`-var` and `-var-file`)
-2. `*.auto.tfvars` files (alphabetical order)
-3. `terraform.tfvars`
-4. Environment variables
-5. Default values in variable declarations
-
-## Usage
-
-1. Copy `terraform.tfvars.example` to `terraform.tfvars`:
-```bash
-cp terraform.tfvars.example terraform.tfvars
-```
-
-2. Edit `terraform.tfvars` with your configuration:
-```hcl
-# Required variables
-project_id = "your-project-id"
-region     = "us-central1"
-zone       = "us-central1-a"
-
-# Optional: Use existing network
-create_network = false
-network_name   = "default"
-subnet_name    = "default"
-
-# Security: Restrict source ranges
-allowed_source_ranges = ["10.0.0.0/8"]
-```
-
-3. Initialize and apply Terraform:
-```bash
-terraform init
-terraform plan
-terraform apply
-```
-
-## Examples
-
-### Basic Usage with Default Network
-
-```hcl
-module "fluentd_agent" {
-  source     = "./terraform"
-  project_id = "my-project"
-  region     = "us-central1"
-  zone       = "us-central1-a"
-}
-```
-
-### Custom Network Configuration
-
-```hcl
-module "fluentd_agent" {
-  source         = "./terraform"
-  project_id     = "my-project"
-  region         = "us-central1"
-  zone           = "us-central1-a"
-  create_network = true
-  network_name   = "fluentd-network"
-  subnet_name    = "fluentd-subnet"
-  subnet_cidr    = "10.0.1.0/24"
-}
-```
-
-### Using Existing Service Account
-
-```hcl
-module "fluentd_agent" {
-  source                 = "./terraform"
-  project_id            = "my-project"
-  region                = "us-central1"
-  zone                  = "us-central1-a"
-  create_service_account = false
-  service_account_email = "existing-sa@my-project.iam.gserviceaccount.com"
-}
-```
-
-## Inputs
-
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| project_id | The GCP project ID | string | - | yes |
-| region | The GCP region | string | - | yes |
-| zone | The GCP zone | string | - | yes |
-| create_service_account | Whether to create a dedicated service account | bool | true | no |
-| service_account_id | The ID of the service account to create | string | "fluentd-agent" | no |
-| create_network | Whether to create a new VPC network | bool | false | no |
-| network_name | The name of the network to use or create | string | "default" | no |
-| instance_name | The name of the Fluentd VM instance | string | "fluentd-agent-vm" | no |
-| machine_type | The machine type for the Fluentd VM | string | "e2-medium" | no |
-| boot_disk_size | The size of the boot disk in GB | number | 20 | no |
+| Name | Description | Type | Default |
+|------|-------------|------|---------|
+| `project_id` | GCP Project ID | string | - |
+| `region` | GCP Region | string | - |
+| `machine_type` | VM Machine Type | string | "e2-medium" |
+| `allowed_source_ranges` | Allowed CIDR ranges | list(string) | ["0.0.0.0/0"] |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| instance_name | The name of the created Fluentd instance |
-| instance_ip_internal | The internal IP address of the Fluentd instance |
-| instance_ip_external | The external IP address of the Fluentd instance |
-| service_account_email | The email of the service account used by the instance |
-| fluentd_forward_port | The port number for Fluentd forward protocol |
+| `instance_group` | Instance group URL |
+| `service_account` | Service account email |
+| `instances_self_links` | List of instance self-links |
 
-## Network Security
+## Infrastructure Details
 
-The module creates necessary firewall rules for Fluentd operation:
-- TCP port 24224 for Fluentd forward protocol
-- Configurable source ranges for access control
+### Managed Instance Group
+- 4 identical instances
+- Automatic health checks (TCP port 24224)
+- Auto-healing enabled
+- Base image: RHEL 8 with SELinux enabled
+
+### google-fluentd Configuration
+- Forward protocol input on port 24224
+- JSON log parsing
+- Original timestamp preservation
+- Buffering with file backend
+- Custom labels for app name and instance ID
+- SELinux and firewall rules properly configured
+
+### Networking
+- Default VPC network
+- Internal network only (no public IP)
+- Firewall rules for port 24224
+- Configurable source IP ranges for internal access
+
+### Security
+- No public IP exposure
+- Custom service account with minimal permissions
+- Only required Cloud API access
+- Network access control via firewall rules
 
 ## Maintenance
 
-The module includes:
-- Automated log rotation configuration
-- SELinux and firewall configuration for RHEL
-- Monitoring setup options
+### Check Instance Status
+```bash
+# List all instances in the group
+gcloud compute instance-groups managed list-instances app-instance-group \
+    --region=REGION
 
-## Notes
+# SSH to instances requires Identity-Aware Proxy (IAP) or bastion host
+gcloud compute ssh app-instance-name --tunnel-through-iap
+```
 
-1. **Security**: 
-   - Restrict `allowed_source_ranges` in production
-   - Consider using a dedicated service account
-   - Enable only necessary API access
+### Check google-fluentd Status
+```bash
+# Check service status
+sudo systemctl status google-fluentd
 
-2. **Networking**:
-   - Default configuration uses existing network
-   - Custom network creation available if needed
-   - Consider network security best practices
+# View logs
+sudo tail -f /var/log/google-fluentd/google-fluentd.log
+```
 
-3. **Logging**:
-   - Configure appropriate buffer sizes based on log volume
-   - Monitor disk usage and log rotation
-   - Review Cloud Logging quotas and pricing
+### Update Configuration
+1. Modify `scripts/app-forward.conf`
+2. Apply changes:
+   ```bash
+   terraform apply
+   ```
+   Note: This will create new instances with updated configuration
 
-## Contributing
+## Troubleshooting
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+### Common Issues
 
-## License
+1. **Instances not starting**
+   - Check startup script logs:
+     ```bash
+     sudo journalctl -u google-startup-scripts
+     ```
 
-This module is licensed under the MIT License - see the LICENSE file for details. 
+2. **Logs not appearing in Cloud Logging**
+   - Verify google-fluentd service:
+     ```bash
+     sudo systemctl status google-fluentd
+     ```
+   - Check permissions:
+     ```bash
+     gcloud projects get-iam-policy PROJECT_ID
+     ```
+
+3. **Connection Issues**
+   - Verify firewall rules:
+     ```bash
+     gcloud compute firewall-rules list
+     ```
+   - Check network connectivity:
+     ```bash
+     telnet INSTANCE_IP 24224
+     ```
+
+## Clean Up
+
+To remove all created resources:
+
+```bash
+terraform destroy
+```
+
+## Best Practices
+
+1. **Security**
+   - No public IP exposure ensures better security
+   - Restrict `allowed_source_ranges` to your application networks
+   - Use IAP or bastion host for instance access
+   - Regularly review service account permissions
+   - Monitor firewall rule changes
+
+2. **Monitoring**
+   - Set up alerts for instance health
+   - Monitor google-fluentd metrics
+   - Review Cloud Logging quotas
+
+3. **Maintenance**
+   - Regularly update google-fluentd
+   - Monitor disk usage for log buffers
+   - Keep startup scripts up to date
+
+## References
+
+- [Google Cloud Logging Documentation](https://cloud.google.com/logging/docs)
+- [Managed Instance Groups Documentation](https://cloud.google.com/compute/docs/instance-groups)
+- [google-fluentd Documentation](https://cloud.google.com/logging/docs/agent) 
