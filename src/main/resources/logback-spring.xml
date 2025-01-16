@@ -1,32 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
-    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+    <springProperty scope="context" name="app.name" source="spring.application.name"/>
+    <springProperty scope="context" name="app.instance.id" source="app.instance.id" defaultValue="${HOSTNAME}"/>
 
-    <appender name="FLUENT" class="ch.qos.logback.more.appenders.DataFluentAppender">
-        <tag>app.log</tag>
-        <label>normal</label>
-        <remoteHost>localhost</remoteHost>
-        <port>24224</port>
+    <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluentLogbackAppender">
+        <tag>app.${app.name}.${app.instance.id}</tag>
+        <remoteHost>${FLUENTD_HOST:-localhost}</remoteHost>
+        <port>${FLUENTD_PORT:-24224}</port>
         <maxQueueSize>20</maxQueueSize>
+        
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcData>true</includeMdcData>
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSX</timestampPattern>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <thread>thread</thread>
+                <message>message</message>
+                <logger>logger</logger>
+                <level>severity</level>
+            </fieldNames>
+            <customFields>{"app_name":"${app.name}","instance_id":"${app.instance.id}","log_id":"${app.name}-${app.instance.id}-${UUID}"}</customFields>
+        </encoder>
+    </appender>
 
-        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
-            <providers>
-                <timestamp>
-                    <timeZone>UTC</timeZone>
-                </timestamp>
-                <pattern>
-                    <pattern>
-                        {
-                        "level": "%level",
-                        "service": "fluentd-appender-poc",
-                        "thread": "%thread",
-                        "class": "%logger{40}",
-                        "message": "%message"
-                        }
-                    </pattern>
-                </pattern>
-            </providers>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
