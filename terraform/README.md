@@ -1,10 +1,11 @@
 # GCP Logging Infrastructure with google-fluentd
 
-This Terraform configuration creates a Google Cloud Platform (GCP) Managed Instance Group (MIG) with 4 instances, each running google-fluentd to collect and forward application logs to Cloud Logging.
+This Terraform configuration creates a Google Cloud Platform (GCP) Managed Instance Group (MIG) with 4 instances running google-fluentd to collect and forward application logs to Cloud Logging, with an internal load balancer for high availability.
 
 ## Architecture Overview
 
 - 4 GCE VM instances in a Managed Instance Group (internal network only)
+- Internal TCP load balancer for high availability
 - Built-in google-fluentd on each instance
 - TCP port 24224 for log forwarding (internal access only)
 - Automatic health checks and instance recovery
@@ -19,6 +20,7 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
   - Compute Engine API
   - Cloud Logging API
   - IAM API
+  - Load Balancing API
 
 ## Configuration Files
 
@@ -73,17 +75,24 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 
 | Name | Description |
 |------|-------------|
-| `instance_group` | Instance group URL |
-| `service_account` | Service account email |
-| `instances_self_links` | List of instance self-links |
+| `logging_lb_ip` | Internal load balancer IP (use for application configuration) |
+| `logging_instance_group` | Instance group URL |
+| `logging_service_account` | Service account email |
+| `fluentd_forward_port` | Fluentd forward protocol port (24224) |
 
 ## Infrastructure Details
 
 ### Managed Instance Group
-- 4 identical instances
+- 4 identical instances running google-fluentd
 - Automatic health checks (TCP port 24224)
 - Auto-healing enabled
 - Base image: RHEL 8 with SELinux enabled
+
+### Internal Load Balancer
+- TCP load balancing for port 24224
+- Automatic health checking
+- Region-wide availability
+- Global access enabled (accessible from all regions in VPC)
 
 ### google-fluentd Configuration
 - Forward protocol input on port 24224
@@ -96,14 +105,45 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 ### Networking
 - Default VPC network
 - Internal network only (no public IP)
+- Internal load balancer for high availability
 - Firewall rules for port 24224
 - Configurable source IP ranges for internal access
 
-### Security
-- No public IP exposure
-- Custom service account with minimal permissions
-- Only required Cloud API access
-- Network access control via firewall rules
+## Application Configuration
+
+### Spring Boot Application Setup
+
+1. **Configure logback-spring.xml**:
+   ```xml
+   <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluentLogbackAppender">
+       <tag>app.${app.name}.${app.instance.id}</tag>
+       <remoteHost>${FLUENTD_HOST:-LOAD_BALANCER_IP}</remoteHost>
+       <port>${FLUENTD_PORT:-24224}</port>
+       ...
+   </appender>
+   ```
+
+2. **Get Load Balancer IP**:
+   ```bash
+   # Using Terraform output
+   export FLUENTD_HOST=$(terraform output -raw logging_lb_ip)
+   
+   # Or using gcloud
+   export FLUENTD_HOST=$(gcloud compute forwarding-rules describe logging-forward-rule \
+       --region=REGION \
+       --format="get(IPAddress)")
+   ```
+
+3. **Run Application**:
+   ```bash
+   java -jar your-application.jar
+   ```
+
+### High Availability Features
+- Load balancer automatically routes to healthy instances
+- If an instance fails, MIG creates a new one
+- Applications only need to know the load balancer IP
+- Automatic request distribution across all healthy instances
 
 ## Maintenance
 
@@ -174,25 +214,34 @@ terraform destroy
 
 ## Best Practices
 
-1. **Security**
+1. **High Availability**
+   - Use the load balancer IP for application configuration
+   - Monitor instance group health
+   - Set up alerts for instance replacements
+   - Review load balancer metrics
+
+2. **Security**
    - No public IP exposure ensures better security
    - Restrict `allowed_source_ranges` to your application networks
    - Use IAP or bastion host for instance access
    - Regularly review service account permissions
    - Monitor firewall rule changes
 
-2. **Monitoring**
+3. **Monitoring**
+   - Monitor load balancer health checks
    - Set up alerts for instance health
    - Monitor google-fluentd metrics
    - Review Cloud Logging quotas
 
-3. **Maintenance**
+4. **Maintenance**
    - Regularly update google-fluentd
    - Monitor disk usage for log buffers
    - Keep startup scripts up to date
+   - Monitor load balancer performance
 
 ## References
 
 - [Google Cloud Logging Documentation](https://cloud.google.com/logging/docs)
+- [Internal TCP Load Balancing](https://cloud.google.com/load-balancing/docs/internal)
 - [Managed Instance Groups Documentation](https://cloud.google.com/compute/docs/instance-groups)
 - [google-fluentd Documentation](https://cloud.google.com/logging/docs/agent) 

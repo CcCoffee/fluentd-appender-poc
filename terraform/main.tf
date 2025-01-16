@@ -109,3 +109,27 @@ resource "google_compute_firewall" "logging_forward" {
   source_ranges = var.allowed_source_ranges
   target_tags   = ["logging-agent"]
 }
+
+# Create internal load balancer for logging agents
+resource "google_compute_region_backend_service" "logging_backend" {
+  name                  = "logging-backend"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "INTERNAL"
+  health_checks         = [google_compute_health_check.logging_health_check.id]
+
+  backend {
+    group = google_compute_region_instance_group_manager.logging_group.instance_group
+  }
+}
+
+resource "google_compute_forwarding_rule" "logging_forwarding" {
+  name                  = "logging-forward-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.logging_backend.id
+  ports                 = ["24224"]
+  network               = "default"
+  subnetwork           = "default"  # 使用默认子网
+  allow_global_access   = true      # 允许同一VPC内的所有区域访问
+}

@@ -76,4 +76,9 @@ output "logging_service_account" {
 output "logging_instances_self_links" {
   description = "List of logging agent instance self-links in the group"
   value       = google_compute_region_instance_group_manager.logging_group.instance_group
+}
+
+output "logging_lb_ip" {
+  description = "The internal IP address of the logging forwarding load balancer"
+  value       = google_compute_forwarding_rule.logging_forwarding.ip_address
 } 
