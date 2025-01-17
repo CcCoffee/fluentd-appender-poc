@@ -142,51 +142,58 @@ resource "google_compute_firewall" "logging_forward" {
   target_tags   = ["logging-agent"]
 }
 
-# Create internal load balancer for logging agents
-resource "google_compute_region_backend_service" "logging_backend" {
-  name                  = "logging-backend"
+# Create internal load balancer TCP backend service
+resource "google_compute_region_backend_service" "tcp_backend" {
+  count                 = var.enable_tcp ? 1 : 0
+  name                  = "tcp-backend"
   region                = var.region
   protocol              = "TCP"
   load_balancing_scheme = "INTERNAL"
   
-  # 根据启用的服务选择对应的健康检查
-  health_checks = (
-    var.enable_tcp ? [google_compute_health_check.lb_tcp_health_check[0].id] : (
-      var.enable_https ? [google_compute_health_check.lb_https_health_check[0].id] : []
-    )
-  )
-
-  # 配置端口名称
-  port_name = (
-    var.enable_tcp ? "fluentd-forward" : (
-      var.enable_https ? "https-service" : null
-    )
-  )
+  health_checks = [google_compute_health_check.lb_tcp_health_check[0].id]
+  port_name     = "fluentd-forward"
 
   backend {
     group = google_compute_region_instance_group_manager.logging_group.instance_group
   }
 }
 
-resource "google_compute_forwarding_rule" "logging_forwarding" {
+# Create internal load balancer HTTPS backend service
+resource "google_compute_region_backend_service" "https_backend" {
+  count                 = var.enable_https ? 1 : 0
+  name                  = "https-backend"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "INTERNAL"
+  
+  health_checks = [google_compute_health_check.lb_https_health_check[0].id]
+  port_name     = "https-service"
+
+  backend {
+    group = google_compute_region_instance_group_manager.logging_group.instance_group
+  }
+}
+
+# TCP forwarding rule
+resource "google_compute_forwarding_rule" "tcp_forwarding" {
   count                 = var.enable_tcp ? 1 : 0
-  name                  = "logging-forward-rule"
+  name                  = "tcp-forward-rule"
   region                = var.region
   load_balancing_scheme = "INTERNAL"
-  backend_service       = google_compute_region_backend_service.logging_backend.id
+  backend_service       = google_compute_region_backend_service.tcp_backend[0].id
   ports                 = [tostring(var.tcp_port)]
   network               = "default"
   subnetwork           = "default"
   allow_global_access   = true
 }
 
-# 添加 HTTPS 服务的转发规则
+# HTTPS forwarding rule
 resource "google_compute_forwarding_rule" "https_forwarding" {
   count                 = var.enable_https ? 1 : 0
   name                  = "https-forward-rule"
   region                = var.region
   load_balancing_scheme = "INTERNAL"
-  backend_service       = google_compute_region_backend_service.logging_backend.id
+  backend_service       = google_compute_region_backend_service.https_backend[0].id
   ports                 = [tostring(var.https_port)]
   network               = "default"
   subnetwork           = "default"
