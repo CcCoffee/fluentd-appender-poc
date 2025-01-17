@@ -1,49 +1,49 @@
 #!/bin/bash
 
-# 安装 EPEL 仓库
+# Install EPEL repository
 sudo dnf install -y epel-release
 
-# 确保google-fluentd已安装并运行
+# Ensure google-fluentd is installed and running
 if ! systemctl is-active --quiet google-fluentd; then
-    # 如果服务不存在或未运行，安装google-fluentd
+    # If service doesn't exist or not running, install google-fluentd
     curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
     sudo bash add-google-cloud-ops-agent-repo.sh --also-install
 
-    # 安装依赖
+    # Install dependencies
     sudo dnf install -y gcc-c++ ruby-devel
 fi
 
-# 创建配置目录（如果不存在）
+# Create config directory (if not exists)
 sudo mkdir -p /etc/google-fluentd/config.d/
 
-# 写入应用日志转发配置
+# Write application log forwarding configuration
 cat << 'EOF' | sudo tee /etc/google-fluentd/config.d/app-forward.conf
 ${fluentd_config}
 EOF
 
-# 设置正确的权限
+# Set correct permissions
 sudo chown -R google-fluentd:google-fluentd /etc/google-fluentd
 sudo chmod -R 644 /etc/google-fluentd/config.d/
 
-# 创建缓冲目录
+# Create buffer directory
 sudo mkdir -p /var/lib/google-fluentd/app-buffers
 sudo chown -R google-fluentd:google-fluentd /var/lib/google-fluentd
 
-# 配置SELinux（RHEL特有）
+# Configure SELinux (RHEL specific)
 sudo setsebool -P antivirus_can_scan_system 1
 sudo semanage port -a -t syslogd_port_t -p tcp 24224 || true
 
-# 配置防火墙
+# Configure firewall
 sudo firewall-cmd --permanent --add-port=24224/tcp
 sudo firewall-cmd --reload
 
-# 重启google-fluentd服务
+# Restart google-fluentd service
 sudo systemctl restart google-fluentd
 
-# 等待服务启动
+# Wait for service to start
 sleep 30
 
-# 验证服务状态
+# Verify service status
 if ! systemctl is-active --quiet google-fluentd; then
     echo "ERROR: google-fluentd failed to start"
     exit 1
