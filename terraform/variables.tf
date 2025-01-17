@@ -18,4 +18,22 @@ variable "allowed_source_ranges" {
   description = "List of CIDR ranges allowed to connect to Fluentd forward port"
   type        = list(string)
   default     = ["0.0.0.0/0"]  # 建议在生产环境中限制
+}
+
+variable "enable_https" {
+  description = "Whether to enable HTTPS service"
+  type        = bool
+  default     = false
+}
+
+variable "https_port" {
+  description = "Port for HTTPS service"
+  type        = number
+  default     = 8443
+}
+
+variable "https_health_check_path" {
+  description = "Health check path for HTTPS service"
+  type        = string
+  default     = "/health"
 } 

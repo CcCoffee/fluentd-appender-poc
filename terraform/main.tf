@@ -63,15 +63,83 @@ resource "google_compute_instance_template" "logging_template" {
   }
 }
 
-# Create health check
-resource "google_compute_health_check" "logging_health_check" {
-  name               = "logging-agent-health-check"
+# Create health check for fluentd service
+resource "google_compute_health_check" "fluentd_health_check" {
+  name               = "fluentd-health-check"
   check_interval_sec = 30
   timeout_sec        = 5
   
   tcp_health_check {
     port = 24224
   }
+}
+
+# Create health check for HTTPS service
+resource "google_compute_health_check" "https_health_check" {
+  count              = var.enable_https ? 1 : 0
+  name               = "https-service-health-check"
+  check_interval_sec = 30
+  timeout_sec        = 5
+
+  https_health_check {
+    port         = var.https_port
+    request_path = var.https_health_check_path
+  }
+}
+
+# Create firewall rule for Fluentd forward protocol
+resource "google_compute_firewall" "logging_forward" {
+  name    = "allow-logging-forward"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = var.enable_https ? ["24224", tostring(var.https_port)] : ["24224"]
+  }
+
+  source_ranges = var.allowed_source_ranges
+  target_tags   = ["logging-agent"]
+}
+
+# Create internal load balancer for logging agents
+resource "google_compute_region_backend_service" "logging_backend" {
+  name                  = "logging-backend"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "INTERNAL"
+  
+  health_checks = var.enable_https ? [
+    google_compute_health_check.fluentd_health_check.id,
+    google_compute_health_check.https_health_check[0].id
+  ] : [google_compute_health_check.fluentd_health_check.id]
+
+  backend {
+    group = google_compute_region_instance_group_manager.logging_group.instance_group
+  }
+}
+
+resource "google_compute_forwarding_rule" "logging_forwarding" {
+  name                  = "logging-forward-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.logging_backend.id
+  ports                 = ["24224"]
+  network               = "default"
+  subnetwork           = "default"
+  allow_global_access   = true
+}
+
+# 添加 HTTPS 服务的转发规则
+resource "google_compute_forwarding_rule" "https_forwarding" {
+  count                 = var.enable_https ? 1 : 0
+  name                  = "https-forward-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.logging_backend.id
+  ports                 = [tostring(var.https_port)]
+  network               = "default"
+  subnetwork           = "default"
+  allow_global_access   = true
 }
 
 # Create MIG
@@ -90,48 +158,26 @@ resource "google_compute_region_instance_group_manager" "logging_group" {
     port = 24224
   }
 
-  target_size = 4  # 固定4个实例
+  dynamic "named_port" {
+    for_each = var.enable_https ? [1] : []
+    content {
+      name = "https-service"
+      port = var.https_port
+    }
+  }
+
+  target_size = 4
 
   auto_healing_policies {
-    health_check      = google_compute_health_check.logging_health_check.id
+    health_check      = google_compute_health_check.fluentd_health_check.id
     initial_delay_sec = 300
   }
-}
 
-# Create firewall rule for Fluentd forward protocol
-resource "google_compute_firewall" "logging_forward" {
-  name    = "allow-logging-forward"
-  network = "default"
-
-  allow {
-    protocol = "tcp"
-    ports    = ["24224"]
+  update_policy {
+    type                  = "PROACTIVE"
+    minimal_action        = "REPLACE"
+    max_surge_fixed       = 1
+    max_unavailable_fixed = 0
+    replacement_method    = "SUBSTITUTE"
   }
-
-  source_ranges = var.allowed_source_ranges
-  target_tags   = ["logging-agent"]
-}
-
-# Create internal load balancer for logging agents
-resource "google_compute_region_backend_service" "logging_backend" {
-  name                  = "logging-backend"
-  region                = var.region
-  protocol              = "TCP"
-  load_balancing_scheme = "INTERNAL"
-  health_checks         = [google_compute_health_check.logging_health_check.id]
-
-  backend {
-    group = google_compute_region_instance_group_manager.logging_group.instance_group
-  }
-}
-
-resource "google_compute_forwarding_rule" "logging_forwarding" {
-  name                  = "logging-forward-rule"
-  region                = var.region
-  load_balancing_scheme = "INTERNAL"
-  backend_service       = google_compute_region_backend_service.logging_backend.id
-  ports                 = ["24224"]
-  network               = "default"
-  subnetwork           = "default"  # 使用默认子网
-  allow_global_access   = true      # 允许同一VPC内的所有区域访问
 }

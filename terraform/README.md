@@ -1,14 +1,16 @@
-# GCP Logging Infrastructure with google-fluentd
+# GCP Logging Infrastructure with Multi-Service Support
 
-This Terraform configuration creates a Google Cloud Platform (GCP) Managed Instance Group (MIG) with 4 instances running google-fluentd to collect and forward application logs to Cloud Logging, with an internal load balancer for high availability.
+This Terraform configuration creates a Google Cloud Platform (GCP) Managed Instance Group (MIG) with 4 instances supporting both google-fluentd logging and HTTPS services, with health checks for both services.
 
 ## Architecture Overview
 
 - 4 GCE VM instances in a Managed Instance Group (internal network only)
+- Dual service support:
+  - google-fluentd for log forwarding (port 24224)
+  - HTTPS service (port 8443)
+- Separate health checks for each service
 - Internal TCP load balancer for high availability
 - Built-in google-fluentd on each instance
-- TCP port 24224 for log forwarding (internal access only)
-- Automatic health checks and instance recovery
 - Using default compute service account
 - RHEL 8 base image with SELinux and firewall configuration
 
@@ -82,10 +84,22 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 
 ## Infrastructure Details
 
+### Health Checks
+- Fluentd Health Check:
+  - TCP check on port 24224
+  - 30-second interval
+  - 5-second timeout
+- HTTPS Service Health Check:
+  - HTTPS check on port 8443
+  - Path: /health
+  - 30-second interval
+  - 5-second timeout
+
 ### Managed Instance Group
-- 4 identical instances running google-fluentd
-- Automatic health checks (TCP port 24224)
-- Auto-healing enabled
+- 4 identical instances running both services
+- Dual auto-healing policies:
+  - Fluentd service (port 24224)
+  - HTTPS service (port 8443)
 - Base image: RHEL 8 with SELinux enabled
 - Using default compute service account with cloud-platform scope
 
@@ -107,7 +121,9 @@ This Terraform configuration creates a Google Cloud Platform (GCP) Managed Insta
 - Default VPC network
 - Internal network only (no public IP)
 - Internal load balancer for high availability
-- Firewall rules for port 24224
+- Firewall rules for both services:
+  - Port 24224 (Fluentd)
+  - Port 8443 (HTTPS)
 - Configurable source IP ranges for internal access
 
 ## Application Configuration
@@ -216,29 +232,29 @@ terraform destroy
 ## Best Practices
 
 1. **High Availability**
-   - Use the load balancer IP for application configuration
-   - Monitor instance group health
-   - Set up alerts for instance replacements
-   - Review load balancer metrics
+   - Monitor both service health checks
+   - Set up alerts for both services
+   - Review metrics for both Fluentd and HTTPS service
+   - Use appropriate timeouts for health checks
 
 2. **Security**
-   - No public IP exposure ensures better security
+   - No public IP exposure
    - Restrict `allowed_source_ranges` to your application networks
    - Use IAP or bastion host for instance access
-   - Default compute service account has necessary permissions for logging
-   - Monitor firewall rule changes
+   - Configure HTTPS certificates properly
+   - Monitor both service ports
 
 3. **Monitoring**
-   - Monitor load balancer health checks
-   - Set up alerts for instance health
-   - Monitor google-fluentd metrics
-   - Review Cloud Logging quotas
+   - Monitor both health check results
+   - Set up alerts for instance replacements
+   - Track metrics for both services
+   - Monitor resource usage (CPU, memory, disk)
 
 4. **Maintenance**
-   - Regularly update google-fluentd
-   - Monitor disk usage for log buffers
-   - Keep startup scripts up to date
-   - Monitor load balancer performance
+   - Update both services regularly
+   - Monitor disk usage for both services
+   - Keep startup scripts updated for both services
+   - Test both health check endpoints regularly
 
 ## References
 
