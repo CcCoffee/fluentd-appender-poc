@@ -65,12 +65,13 @@ resource "google_compute_instance_template" "logging_template" {
 
 # Create health check for fluentd service
 resource "google_compute_health_check" "fluentd_health_check" {
+  count              = var.enable_tcp ? 1 : 0
   name               = "fluentd-health-check"
   check_interval_sec = 30
   timeout_sec        = 5
   
   tcp_health_check {
-    port = 24224
+    port = var.tcp_port
   }
 }
 
@@ -94,7 +95,10 @@ resource "google_compute_firewall" "logging_forward" {
 
   allow {
     protocol = "tcp"
-    ports    = var.enable_https ? ["24224", tostring(var.https_port)] : ["24224"]
+    ports    = concat(
+      var.enable_tcp ? [tostring(var.tcp_port)] : [],
+      var.enable_https ? [tostring(var.https_port)] : []
+    )
   }
 
   source_ranges = var.allowed_source_ranges
@@ -108,10 +112,10 @@ resource "google_compute_region_backend_service" "logging_backend" {
   protocol              = "TCP"
   load_balancing_scheme = "INTERNAL"
   
-  health_checks = var.enable_https ? [
-    google_compute_health_check.fluentd_health_check.id,
-    google_compute_health_check.https_health_check[0].id
-  ] : [google_compute_health_check.fluentd_health_check.id]
+  health_checks = concat(
+    var.enable_tcp ? [google_compute_health_check.fluentd_health_check[0].id] : [],
+    var.enable_https ? [google_compute_health_check.https_health_check[0].id] : []
+  )
 
   backend {
     group = google_compute_region_instance_group_manager.logging_group.instance_group
@@ -119,11 +123,12 @@ resource "google_compute_region_backend_service" "logging_backend" {
 }
 
 resource "google_compute_forwarding_rule" "logging_forwarding" {
+  count                 = var.enable_tcp ? 1 : 0
   name                  = "logging-forward-rule"
   region                = var.region
   load_balancing_scheme = "INTERNAL"
   backend_service       = google_compute_region_backend_service.logging_backend.id
-  ports                 = ["24224"]
+  ports                 = [tostring(var.tcp_port)]
   network               = "default"
   subnetwork           = "default"
   allow_global_access   = true
@@ -153,9 +158,12 @@ resource "google_compute_region_instance_group_manager" "logging_group" {
     instance_template = google_compute_instance_template.logging_template.id
   }
 
-  named_port {
-    name = "fluentd-forward"
-    port = 24224
+  dynamic "named_port" {
+    for_each = var.enable_tcp ? [1] : []
+    content {
+      name = "fluentd-forward"
+      port = var.tcp_port
+    }
   }
 
   dynamic "named_port" {
@@ -169,7 +177,7 @@ resource "google_compute_region_instance_group_manager" "logging_group" {
   target_size = 4
 
   auto_healing_policies {
-    health_check      = google_compute_health_check.fluentd_health_check.id
+    health_check      = var.enable_tcp ? google_compute_health_check.fluentd_health_check[0].id : null
     initial_delay_sec = 300
   }
 

@@ -9,4 +9,13 @@ machine_type = "e2-medium"
 allowed_source_ranges = [
   "10.0.0.0/8",    # 示例：内部网络
   "172.16.0.0/12", # 示例：VPN网络
-] 
+]
+
+# TCP服务配置
+enable_tcp = true   # 启用TCP转发服务
+tcp_port  = 24224   # TCP服务端口
+
+# HTTPS服务配置
+enable_https = false           # 默认不启用HTTPS服务
+# https_port = 8443           # 自定义HTTPS端口（可选）
+# https_health_check_path = "/health"  # 自定义健康检查路径（可选） 

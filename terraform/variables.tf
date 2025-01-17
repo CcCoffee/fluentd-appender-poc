@@ -36,4 +36,16 @@ variable "https_health_check_path" {
   description = "Health check path for HTTPS service"
   type        = string
   default     = "/health"
+}
+
+variable "enable_tcp" {
+  description = "Whether to enable TCP forward service"
+  type        = bool
+  default     = true
+}
+
+variable "tcp_port" {
+  description = "Port for TCP forward service"
+  type        = number
+  default     = 24224
 } 
