@@ -177,7 +177,11 @@ resource "google_compute_region_instance_group_manager" "logging_group" {
   target_size = 4
 
   auto_healing_policies {
-    health_check      = var.enable_tcp ? google_compute_health_check.fluentd_health_check[0].id : null
+    health_check = (
+      var.enable_tcp ? google_compute_health_check.fluentd_health_check[0].id : (
+        var.enable_https ? google_compute_health_check.https_health_check[0].id : null
+      )
+    )
     initial_delay_sec = 300
   }
 
