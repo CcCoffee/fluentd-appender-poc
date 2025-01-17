@@ -63,7 +63,7 @@ resource "google_compute_instance_template" "logging_template" {
   }
 }
 
-# Create health check for fluentd service
+# Create health check for fluentd service (for auto healing)
 resource "google_compute_health_check" "fluentd_health_check" {
   count              = var.enable_tcp ? 1 : 0
   name               = "fluentd-health-check"
@@ -75,7 +75,7 @@ resource "google_compute_health_check" "fluentd_health_check" {
   }
 }
 
-# Create health check for HTTPS service
+# Create health check for HTTPS service (for auto healing)
 resource "google_compute_health_check" "https_health_check" {
   count              = var.enable_https ? 1 : 0
   name               = "https-service-health-check"
@@ -85,6 +85,43 @@ resource "google_compute_health_check" "https_health_check" {
   https_health_check {
     port         = var.https_port
     request_path = var.https_health_check_path
+  }
+}
+
+# Create health check for load balancer (TCP)
+resource "google_compute_health_check" "lb_tcp_health_check" {
+  count              = var.enable_tcp ? 1 : 0
+  name               = "lb-tcp-health-check"
+  check_interval_sec = 5  # 更频繁的检查间隔
+  timeout_sec        = 5
+  healthy_threshold  = 2  # 连续成功次数
+  unhealthy_threshold = 3 # 连续失败次数
+  
+  tcp_health_check {
+    port = var.tcp_port
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Create health check for load balancer (HTTPS)
+resource "google_compute_health_check" "lb_https_health_check" {
+  count              = var.enable_https ? 1 : 0
+  name               = "lb-https-health-check"
+  check_interval_sec = 5
+  timeout_sec        = 5
+  healthy_threshold  = 2
+  unhealthy_threshold = 3
+  
+  https_health_check {
+    port         = var.https_port
+    request_path = var.https_health_check_path
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -112,9 +149,11 @@ resource "google_compute_region_backend_service" "logging_backend" {
   protocol              = "TCP"
   load_balancing_scheme = "INTERNAL"
   
-  health_checks = concat(
-    var.enable_tcp ? [google_compute_health_check.fluentd_health_check[0].id] : [],
-    var.enable_https ? [google_compute_health_check.https_health_check[0].id] : []
+  # 根据启用的服务选择对应的健康检查
+  health_checks = (
+    var.enable_tcp ? [google_compute_health_check.lb_tcp_health_check[0].id] : (
+      var.enable_https ? [google_compute_health_check.lb_https_health_check[0].id] : []
+    )
   )
 
   backend {
