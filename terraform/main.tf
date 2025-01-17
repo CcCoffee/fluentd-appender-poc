@@ -156,6 +156,13 @@ resource "google_compute_region_backend_service" "logging_backend" {
     )
   )
 
+  # 配置端口名称
+  port_name = (
+    var.enable_tcp ? "fluentd-forward" : (
+      var.enable_https ? "https-service" : null
+    )
+  )
+
   backend {
     group = google_compute_region_instance_group_manager.logging_group.instance_group
   }
