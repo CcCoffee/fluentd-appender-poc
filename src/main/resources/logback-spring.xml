@@ -3,6 +3,9 @@
     <springProperty scope="context" name="app.name" source="spring.application.name"/>
     <springProperty scope="context" name="app.instance.id" source="app.instance.id" defaultValue="${HOSTNAME}"/>
 
+    <!-- Define timestamp for log entries -->
+    <timestamp key="timestamp" datePattern="yyyy-MM-dd'T'HH:mm:ss.SSSX"/>
+
     <appender name="FLUENT_SYNC" class="ch.qos.logback.more.appenders.DataFluentAppender">
         <!-- Simplified tag for routing only -->
         <tag>app</tag>
@@ -21,25 +24,25 @@
             <value>${app.instance.id}</value>
         </additionalField>
         <additionalField>
-            <key>log_id</key>
-            <value>${app.name}-${app.instance.id}-${UUID}</value>
-        </additionalField>
-        <additionalField>
             <key>severity</key>
             <value>%level</value>
         </additionalField>
         <additionalField>
-            <key>timestamp</key>
-            <value>%date{yyyy-MM-dd'T'HH:mm:ss.SSSX}</value>
+            <key>trace_id</key>
+            <value>%X{traceId:-}</value>
+        </additionalField>
+        <additionalField>
+            <key>span_id</key>
+            <value>%X{spanId:-}</value>
         </additionalField>
 
         <!-- Buffer and timeout settings -->
         <bufferCapacity>16777216</bufferCapacity>
         <timeout>10000</timeout>
 
-        <!-- Message formatting with app name, method and line number -->
+        <!-- Message formatting with app name, method, line number and trace info -->
         <encoder>
-            <pattern><![CDATA[${app.name} [%thread] %-5level %logger{36}.%M:%line - %message]]></pattern>
+            <pattern><![CDATA[${app.name} %-5level [%X{traceId:-},%X{spanId:-}] %logger{36}.%M:%line - %message]]></pattern>
         </encoder>
 
         <!-- Custom message field name -->
@@ -60,7 +63,7 @@
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} ${app.name} [%thread] %-5level %logger{36}.%M:%line - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} ${app.name} [%thread] [%X{traceId:-},%X{spanId:-}] %-5level %logger{36}.%M:%line - %msg%n</pattern>
         </encoder>
     </appender>
 
