@@ -42,7 +42,7 @@
 
         <!-- Message formatting with app name, method, line number and trace info -->
         <encoder>
-            <pattern><![CDATA[${app.name} %-5level [%X{traceId:-},%X{spanId:-}] %logger{36}.%M:%line - %message]]></pattern>
+            <pattern><![CDATA[%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} ${app.name} %-5level [%X{traceId:-},%X{spanId:-}] %logger{36}.%M:%line - %message]]></pattern>
         </encoder>
 
         <!-- Custom message field name -->
