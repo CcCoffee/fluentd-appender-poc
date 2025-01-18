@@ -3,11 +3,16 @@
     <springProperty scope="context" name="app.name" source="spring.application.name"/>
     <springProperty scope="context" name="app.instance.id" source="app.instance.id" defaultValue="${HOSTNAME}"/>
 
-    <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluentLogbackAppender">
+    <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluencyLogbackAppender">
         <tag>app.${app.name}.${app.instance.id}</tag>
         <remoteHost>${FLUENTD_HOST:-localhost}</remoteHost>
         <port>${FLUENTD_PORT:-24224}</port>
-        <maxQueueSize>20</maxQueueSize>
+        
+        <ackResponseMode>true</ackResponseMode>
+        <fileBackupDir>/var/log/fluency</fileBackupDir>
+        <bufferChunkRetentionTimeMillis>1000</bufferChunkRetentionTimeMillis>
+        <waitUntilBufferFlushed>30</waitUntilBufferFlushed>
+        <waitUntilFlusherTerminated>40</waitUntilFlusherTerminated>
         
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <includeMdcData>true</includeMdcData>
