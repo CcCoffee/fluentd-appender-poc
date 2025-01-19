@@ -81,4 +81,14 @@ output "logging_instances_self_links" {
 output "logging_lb_ip" {
   description = "The internal IP address of the logging forwarding load balancer"
   value       = google_compute_forwarding_rule.logging_forwarding.ip_address
+}
+
+output "tcp_static_ip" {
+  description = "TCP服务的静态IP地址"
+  value       = var.enable_tcp ? google_compute_address.tcp_static_ip[0].address : null
+}
+
+output "https_static_ip" {
+  description = "HTTPS服务的静态IP地址"
+  value       = var.enable_https ? google_compute_address.https_static_ip[0].address : null
 } 

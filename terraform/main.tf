@@ -174,6 +174,26 @@ resource "google_compute_region_backend_service" "https_backend" {
   }
 }
 
+# 为TCP服务创建静态IP
+resource "google_compute_address" "tcp_static_ip" {
+  count        = var.enable_tcp ? 1 : 0
+  name         = "tcp-static-ip"
+  region       = var.region
+  address_type = "INTERNAL"
+  subnetwork   = "default"
+  purpose      = "GCE_ENDPOINT"
+}
+
+# 为HTTPS服务创建静态IP
+resource "google_compute_address" "https_static_ip" {
+  count        = var.enable_https ? 1 : 0
+  name         = "https-static-ip"
+  region       = var.region
+  address_type = "INTERNAL"
+  subnetwork   = "default"
+  purpose      = "GCE_ENDPOINT"
+}
+
 # TCP forwarding rule
 resource "google_compute_forwarding_rule" "tcp_forwarding" {
   count                 = var.enable_tcp ? 1 : 0
@@ -185,6 +205,7 @@ resource "google_compute_forwarding_rule" "tcp_forwarding" {
   network               = "default"
   subnetwork           = "default"
   allow_global_access   = true
+  ip_address           = google_compute_address.tcp_static_ip[0].address
 }
 
 # HTTPS forwarding rule
@@ -198,6 +219,7 @@ resource "google_compute_forwarding_rule" "https_forwarding" {
   network               = "default"
   subnetwork           = "default"
   allow_global_access   = true
+  ip_address           = google_compute_address.https_static_ip[0].address
 }
 
 # Create MIG
