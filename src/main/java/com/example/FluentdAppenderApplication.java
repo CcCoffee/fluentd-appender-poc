@@ -1,7 +1,6 @@
 package com.example;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.slf4j.*;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -9,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 
 @SpringBootApplication
 @EnableScheduling
@@ -23,7 +23,10 @@ public class FluentdAppenderApplication {
 
     @Scheduled(fixedRate = 1000)
     public void logCurrentTime() {
-        String currentTime = LocalDateTime.now().format(formatter);
-        logger.info("Current time is: {}", currentTime);
+        // MDC 中的字段会自动推送给 Fluentd
+        try (MDC.MDCCloseable ignored = MDC.putCloseable("requestId", UUID.randomUUID().toString())) {
+            String currentTime = LocalDateTime.now().format(formatter);
+            logger.info("Current time is: {}", currentTime);
+        }
     }
 } 

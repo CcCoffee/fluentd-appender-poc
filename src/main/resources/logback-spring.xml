@@ -6,7 +6,7 @@
     <!-- Define timestamp for log entries -->
     <timestamp key="timestamp" datePattern="yyyy-MM-dd'T'HH:mm:ss.SSSX"/>
 
-    <appender name="FLUENT_SYNC" class="ch.qos.logback.more.appenders.DataFluentAppender">
+    <appender name="FLUENT_SYNC" class="ch.qos.logback.more.appenders.FluentdAppender">
         <!-- Simplified tag for routing only -->
         <tag>app</tag>
 
@@ -47,10 +47,6 @@
 
         <!-- Custom message field name -->
         <messageFieldKeyName>message</messageFieldKeyName>
-
-        <!-- Map marker settings -->
-        <flattenMapMarker>true</flattenMapMarker>
-        <markerPrefix>marker_</markerPrefix>
     </appender>
 
     <!-- Async wrapper for Fluentd appender -->
