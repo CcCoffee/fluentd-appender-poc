@@ -1,52 +1,83 @@
-h1. Spring Boot Application Logs Integration with GCP Cloud Logging via google-fluentd
+h1. Spring Boot Application Logs Integration with GCP Cloud Logging via Custom Logging Service
 
 h2. Overview
 
-This guide demonstrates how to forward Spring Boot application logs to Google Cloud Logging using the built-in google-fluentd agent on GCE VMs. The solution leverages logback-more-appenders for efficient log forwarding and ensures proper timestamp handling in GCP Cloud Logging.
+This guide demonstrates how to forward Spring Boot application logs to Google Cloud Logging using a custom logging service deployed on GCE VMs and google-fluentd agent. The solution leverages Splunk client library for efficient log forwarding and ensures proper timestamp handling in GCP Cloud Logging.
 
 h2. Architecture Overview
 
 {panel:title=System Components}
-* Spring Boot Application with logback-more-appenders
-* Built-in google-fluentd Agent on GCE VM
+* Spring Boot Applications with Splunk client library
+* Custom Logging Service deployed in Managed Instance Group (MIG)
+* Built-in google-fluentd Agent on GCE VMs
+* Google Cloud Load Balancer
 * Google Cloud Logging
 {panel}
 
 {panel:title=Data Flow}
-1. Application generates logs via Logback
-2. Logback-more-appenders forwards logs to google-fluentd via TCP (port 24224)
-3. google-fluentd processes and forwards logs to GCP Cloud Logging
-4. Logs become available in GCP Log Explorer with original application timestamps
+1. Applications generate logs and send them to Custom Logging Service via Splunk client library
+2. Custom Logging Service writes logs to local files using RollingFileAppender
+3. google-fluentd monitors and reads log files using tail plugin
+4. google-fluentd processes and forwards logs to GCP Cloud Logging
+5. Logs become available in GCP Log Explorer with original timestamps
 {panel}
 
 h2. Prerequisites
 
 * Google Cloud Platform Account with:
-** Compute Engine VM with google-fluentd installed
+** Compute Engine MIG with google-fluentd installed
 ** Cloud Logging API enabled
+** Cloud Load Balancing configured
 * Java Development Kit (JDK) 17
 * Maven >= 3.8
 
 h2. Implementation Guide
 
-h3. 1. google-fluentd Configuration
+h3. 1. Custom Logging Service Configuration
 
-Create a new configuration file for application logs forwarding:
+h4. 1.1 Log File Configuration
+
+The Custom Logging Service uses RollingFileAppender to write logs to local files:
+
+{code:xml}
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>/var/log/custom-logging-service/application.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>/var/log/custom-logging-service/application.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcData>true</includeMdcData>
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSX</timestampPattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
+{code}
+
+h4. 1.2 google-fluentd Configuration
+
+Create a configuration file for tailing application logs:
 
 {code:properties}
-# /etc/google-fluentd/config.d/app-forward.conf
-# Receive application logs
+# /etc/google-fluentd/config.d/custom-service-tail.conf
 <source>
-  @type forward
-  port 24224
-  bind 0.0.0.0
+  @type tail
+  format json
+  path /var/log/custom-logging-service/application.log
+  pos_file /var/lib/google-fluentd/custom-service.pos
+  tag custom.service
+  read_from_head true
 </source>
 
-# Process and forward logs to GCP
-<match app.**>
+<match custom.service>
   @type google_cloud
-
-  # Use application timestamp
+  
   use_metadata_service true
   detect_json true
   enable_monitoring false
@@ -56,26 +87,19 @@ Create a new configuration file for application logs forwarding:
   timestamp_key timestamp
   
   # Resource and labels configuration
-  resource_type "generic_task"
+  resource_type "gce_instance"
   insert_id_key log_id
   labels_key log_labels
   
-  # Buffer settings
   <buffer>
     @type file
-    path /var/lib/google-fluentd/app-buffers
+    path /var/lib/google-fluentd/custom-service-buffers
     flush_interval 5s
     chunk_limit_size 2M
     total_limit_size 512M
     retry_max_interval 30
     retry_forever false
   </buffer>
-
-  # Custom labels
-  <custom_labels>
-    app_name ${tag_parts[1]}
-    instance_id ${tag_parts[2]}
-  </custom_labels>
 </match>
 {code}
 
@@ -85,107 +109,96 @@ h4. 2.1 Maven Dependencies
 
 {code:xml}
 <dependencies>
-    <!-- Logback More Appenders -->
+    <!-- Splunk Client Library -->
     <dependency>
-        <groupId>com.sndyuk</groupId>
-        <artifactId>logback-more-appenders</artifactId>
-        <version>1.8.8</version>
-    </dependency>
-
-    <!-- Fluent Logger -->
-    <dependency>
-        <groupId>org.fluentd</groupId>
-        <artifactId>fluent-logger</artifactId>
-        <version>0.3.4</version>
+        <groupId>com.splunk.logging</groupId>
+        <artifactId>splunk-library-javalogging</artifactId>
+        <version>1.8.0</version>
     </dependency>
 </dependencies>
 {code}
 
-h4. 2.2 Logback Configuration (logback-spring.xml)
-
-{code:xml}
-<?xml version="1.0" encoding="UTF-8"?>
-<configuration>
-    <springProperty scope="context" name="app.name" source="spring.application.name"/>
-    <springProperty scope="context" name="app.instance.id" source="app.instance.id" defaultValue="${HOSTNAME}"/>
-
-    <appender name="FLUENT" class="ch.qos.logback.more.appenders.FluentLogbackAppender">
-        <tag>app.${app.name}.${app.instance.id}</tag>
-        <remoteHost>${FLUENTD_HOST:-localhost}</remoteHost>
-        <port>${FLUENTD_PORT:-24224}</port>
-        <maxQueueSize>20</maxQueueSize>
-        
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-            <includeMdcData>true</includeMdcData>
-            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSX</timestampPattern>
-            <fieldNames>
-                <timestamp>timestamp</timestamp>
-                <thread>thread</thread>
-                <message>message</message>
-                <logger>logger</logger>
-                <level>severity</level>
-            </fieldNames>
-            <customFields>{"app_name":"${app.name}","instance_id":"${app.instance.id}","log_id":"${app.name}-${app.instance.id}-${UUID}"}</customFields>
-        </encoder>
-    </appender>
-
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-
-    <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FLUENT"/>
-    </root>
-</configuration>
-{code}
-
-h3. 3. Application Configuration
-
-Add the following to your application.yml:
+h4. 2.2 Application Configuration (application.yml)
 
 {code:yaml}
 spring:
   application:
-    name: your-app-name  # Replace with actual app name
+    name: your-app-name
 
-app:
-  instance:
-    id: ${INSTANCE_ID:${HOSTNAME}}
+logging:
+  splunk:
+    host: ${LOGGING_SERVICE_HOST}
+    port: ${LOGGING_SERVICE_PORT}
+    token: ${LOGGING_SERVICE_TOKEN}
 {code}
+
+h3. 3. Infrastructure Configuration
+
+h3. 3.1 Managed Instance Group Setup
+
+* Configure instance template with:
+** Custom Logging Service deployment
+** google-fluentd installation and configuration
+** Appropriate IAM roles
+** Health check endpoints
+
+h3. 3.2 Load Balancer Configuration
+
+* Setup HTTP(S) Load Balancer
+* Configure backend service with MIG
+* Setup health checks
+* Configure round-robin load balancing
+
+h3. 3.3 Autoscaling Configuration
+
+* Define CPU utilization target
+* Set minimum and maximum instances
+* Configure cooldown period
 
 h2. Deployment Steps
 
-h3. 1. Configure google-fluentd
+h3. 1. Deploy Custom Logging Service
+
+{code:bash}
+# Deploy to GCE using Terraform/deployment manager
+terraform apply
+
+# Verify MIG deployment
+gcloud compute instance-groups managed list
+{code}
+
+h3. 2. Configure google-fluentd
 
 {code:bash}
 # Copy configuration file
-sudo cp app-forward.conf /etc/google-fluentd/config.d/
+sudo cp custom-service-tail.conf /etc/google-fluentd/config.d/
 
 # Restart google-fluentd
 sudo service google-fluentd restart
 {code}
 
-h3. 2. Deploy Application
+h3. 3. Deploy Application
 
 {code:bash}
 # Package the application
 mvn clean package
 
-# Run the application with environment variables
-export FLUENTD_HOST=<google-fluentd-host>
+# Run with environment variables
+export LOGGING_SERVICE_HOST=<lb-address>
+export LOGGING_SERVICE_PORT=<lb-port>
 java -jar target/your-application.jar
 {code}
 
 h2. Verification
 
-h3. 1. Check google-fluentd Status
+h3. 1. Check System Components
 
 {code:bash}
-# Check service status
-sudo service google-fluentd status
+# Check MIG status
+gcloud compute instance-groups managed list-instances <mig-name>
+
+# Check load balancer health
+gcloud compute backend-services get-health <backend-service-name>
 
 # View google-fluentd logs
 sudo tail -f /var/log/google-fluentd/google-fluentd.log
@@ -196,41 +209,46 @@ h3. 2. View Logs in GCP Console
 1. Navigate to Cloud Logging Console
 2. Use the following query to filter logs:
 {code:text}
-resource.type="generic_task"
-resource.labels.app_name="your-app-name"
+resource.type="gce_instance"
+jsonPayload.app_name="your-app-name"
 {code}
 
 h2. Best Practices
 
+* Monitor MIG metrics for scaling decisions
+* Implement proper error handling in Custom Logging Service
 * Use structured logging with consistent field names
 * Include correlation IDs for request tracing
-* Set appropriate log levels
+* Set appropriate log retention policies
 * Monitor google-fluentd buffer usage
-* Use meaningful custom labels for better log organization
-* Ensure proper timestamp handling in both application and google-fluentd
+* Implement proper security measures for logging service access
 
 h2. Troubleshooting
 
 h3. Common Issues
 
 || Issue || Solution ||
-| Logs not appearing in GCP | Check google-fluentd service status and logs |
-| Incorrect timestamps | Verify timestamp_key configuration and logback timestamp format |
-| Connection refused | Check port 24224 accessibility |
-| Memory pressure | Monitor and adjust buffer settings |
+| Logs not appearing in GCP | Check google-fluentd service status and tail configuration |
+| Load balancer health check failures | Verify Custom Logging Service health endpoints |
+| High latency | Check MIG scaling settings and current load |
+| Connection refused | Verify load balancer and firewall configurations |
 
 h3. Useful Commands
 
 {code:bash}
+# Check MIG and instances
+gcloud compute instance-groups managed describe <mig-name>
+
+# View load balancer logs
+gcloud compute url-maps list
+
 # Check google-fluentd configuration
 sudo google-fluentd --dry-run -c /etc/google-fluentd/google-fluentd.conf
-
-# View detailed logs
-sudo tail -f /var/log/google-fluentd/google-fluentd.log
 {code}
 
 h2. References
 
 * [Google Cloud Logging Documentation|https://cloud.google.com/logging/docs]
-* [Logback Documentation|http://logback.qos.ch/documentation.html]
-* [Spring Boot Logging|https://docs.spring.io/spring-boot/docs/current/reference/html/features.html#features.logging] 
+* [Instance Groups Documentation|https://cloud.google.com/compute/docs/instance-groups]
+* [Load Balancing Documentation|https://cloud.google.com/load-balancing/docs]
+* [Splunk Logging Library|https://github.com/splunk/splunk-library-javalogging] 
