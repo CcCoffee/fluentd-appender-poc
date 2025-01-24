@@ -157,36 +157,79 @@ h3. 3.3 Autoscaling Configuration
 
 h2. Deployment Steps
 
-h3. 1. Deploy Custom Logging Service
+h3. 1. Prepare Deployment Artifacts
+
+The following artifacts need to be prepared:
+* Custom Logging Service JAR file
+* Service configuration files
+* SSL certificates
+* google-fluentd tail configuration
+* Terraform scripts for infrastructure provisioning
+
+h3. 2. Automated Deployment Process
+
+The deployment process is automated using Ansible and Terraform, following these steps:
+
+h4. 2.1 Ansible Preparation Phase
+* Upload deployment artifacts to GCP bucket:
+** Custom Logging Service JAR
+** Configuration files
+** SSL certificates
+** google-fluentd tail configuration
+* Clone Terraform repository containing infrastructure code
+
+h4. 2.2 Terraform Infrastructure Provisioning
+The Terraform scripts handle the following tasks in sequence:
+
+1. Initial VM Creation and Configuration
+* Create temporary VM instance
+* Configure VM with startup scripts for Custom Logging Service
+* Install and configure google-fluentd
+* Setup necessary IAM roles and permissions
+
+2. Custom Image Creation
+* Create custom image from configured VM
+* Validate image creation
+* Clean up temporary VM
+
+3. Instance Template Creation
+* Create instance template using custom image
+* Configure metadata and startup scripts
+* Set up networking and security configurations
+
+4. MIG and Load Balancer Setup
+* Create Managed Instance Group
+* Configure auto-scaling policies
+* Setup HTTP(S) Load Balancer
+* Configure health checks
+* Setup backend services
+
+h3. 3. Verify Deployment
 
 {code:bash}
-# Deploy to GCE using Terraform/deployment manager
-terraform apply
-
 # Verify MIG deployment
-gcloud compute instance-groups managed list
+gcloud compute instance-groups managed list-instances <mig-name>
+
+# Check load balancer health
+gcloud compute backend-services get-health <backend-service-name>
+
+# Verify auto-scaling configuration
+gcloud compute instance-groups managed describe <mig-name>
+
+# Test logging service endpoints
+curl -k https://<lb-address>/health
 {code}
 
-h3. 2. Configure google-fluentd
+h3. 4. Post-Deployment Configuration
 
-{code:bash}
-# Copy configuration file
-sudo cp custom-service-tail.conf /etc/google-fluentd/config.d/
+Update application configuration with load balancer details:
 
-# Restart google-fluentd
-sudo service google-fluentd restart
-{code}
-
-h3. 3. Deploy Application
-
-{code:bash}
-# Package the application
-mvn clean package
-
-# Run with environment variables
-export LOGGING_SERVICE_HOST=<lb-address>
-export LOGGING_SERVICE_PORT=<lb-port>
-java -jar target/your-application.jar
+{code:yaml}
+logging:
+  splunk:
+    host: ${LOGGING_SERVICE_LB_ADDRESS}
+    port: 443  # Default HTTPS port
+    token: ${LOGGING_SERVICE_TOKEN}
 {code}
 
 h2. Verification
